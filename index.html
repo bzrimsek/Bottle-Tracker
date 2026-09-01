@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Killer B's Bottle Tracker — Whisky Shelf & Tasting Curriculum PWA
-     Version : v0.1.37  Build 2026-08-31 11:51 PM ET
+     Version : v0.1.38  Build 2026-08-31 11:59 PM ET
      Author  : BiZStoryGuru LLC
      Deploy  : upload index.html + sw.js + manifest.json + data.json
                + mark.png + icon-192.png + icon-512.png to GitHub repo root
@@ -11,6 +11,7 @@
 ============================================================ -->
 <!--
 CHANGELOG
+// v0.1.38  2026-08-31  Back joined the action row, and a premium that was under retail stopped calling itself a premium.
 // v0.1.37  2026-08-31  The bottom of a scrolling page no longer looks like it runs behind the tab bar.
 // v0.1.36  2026-08-31  ship.py recorded on every run, which made it lie.
 // v0.1.35  2026-08-31  The last three US bottlers are on the map and two prices are corrected from Ohio state retail.
@@ -20,7 +21,6 @@ CHANGELOG
 // v0.1.31  2026-08-31  Charts are now a way in, the dashboard is reordered, and sealed is a question rather than an assumption.
 // v0.1.30  2026-08-31  Build a flight is now an AI-assisted design, and Shop holds its answer on screen.
 // v0.1.29  2026-08-31  Three maps became one.
-// v0.1.28  2026-08-31  Eleven fixes from a session on the phone and a desktop.
 // Older entries are in CHANGELOG.md.
 -->
 <html lang="en">
@@ -98,6 +98,8 @@ nav{box-shadow:0 -1px 0 rgba(26,22,19,.10), 0 -8px 18px rgba(26,22,19,.06)}
    thing you came to do is reachable without scrolling past the record. */
 .detail-acts{display:flex;gap:7px;flex-wrap:wrap;align-items:center;
   margin-bottom:12px}
+/* Back sits first and is visually quieter than the actions beside it. */
+.detail-acts #backBtn{padding-left:10px}
 .hdr h1{font-size:21px;color:var(--ink-deep)}
 .brand{display:flex;align-items:center;gap:11px;margin-bottom:14px}
 .instbtn{width:36px;height:36px;flex:none;border-radius:9px;
@@ -597,7 +599,9 @@ button.bar.tappable:hover .track,button.bar.tappable:focus-visible .track{
 
 <!-- ======================= DETAIL (bottle or flight) ======================= -->
 <section id="scr-detail" class="screen">
-  <button class="btn ghost" id="backBtn" style="margin-bottom:12px">Back</button>
+  <div class="detail-acts" id="detailActs">
+    <button class="btn btn-sm ghost" id="backBtn">‹ Back</button>
+  </div>
   <div id="detailBody"></div>
 </section>
 
@@ -616,8 +620,8 @@ button.bar.tappable:hover .track,button.bar.tappable:focus-visible .track{
 
 <script>
 'use strict';
-const APP_VERSION = '0.1.37';
-const BUILD_TIME  = '2026-08-31 11:51 PM ET';
+const APP_VERSION = '0.1.38';
+const BUILD_TIME  = '2026-08-31 11:59 PM ET';
 
 /* =====================================================================
    PURE LOGIC — every function below is called by the test harness.
@@ -641,6 +645,15 @@ L.ownedCount = function (key, bottles) {
 
 // Secondary over MSRP. Null when either side is missing or zero -- 0.0 in
 // the source data means "not recorded", not "worthless".
+// Wording for a premium ratio. Above 1 is a premium; below 1 the secondary
+// is UNDER retail, which is a discount and must not read as a premium.
+L.premiumText = function (r) {
+  if (!r) return null;
+  if (r > 1.02) return r + '\u00d7 over MSRP';
+  if (r < 0.98) return r + '\u00d7 MSRP \u2014 under retail';
+  return 'about MSRP';
+};
+
 L.premium = function (msrp, secondary) {
   if (!msrp || !secondary || msrp <= 0 || secondary <= 0) return null;
   return Math.round((secondary / msrp) * 100) / 100;
@@ -2993,13 +3006,22 @@ function renderShelf() {
 }
 
 /* --- bottle detail -------------------------------------------------- */
+// The detail action row, cleared back to just Back. Whichever screen is
+// opening then adds its own buttons to it.
+function detailActs() {
+  const row = $('#detailActs');
+  while (row.children.length > 1) row.removeChild(row.lastChild);
+  return row;
+}
+
 function showBottle(k) {
   S.lastList = 'shelf';
   const p = prod(k);
   const body = $('#detailBody'); body.innerHTML = '';
 
-  // Actions first: what you came to do should not sit below the record.
-  const acts = el('div', 'detail-acts');
+  // Actions go on the row that already holds Back, so the whole header is
+  // one line rather than a button stranded above a row of buttons.
+  const acts = detailActs();
   const editBtn = el('button', 'btn btn-sm btn-gold', 'Edit');
   editBtn.onclick = () => productForm(p);
   acts.appendChild(editBtn);
@@ -3024,7 +3046,6 @@ function showBottle(k) {
     });
   };
   acts.appendChild(delBtn);
-  body.appendChild(acts);
   const h = el('div', 'sheet');
   const t = el('h2'); t.style.fontSize = '21px'; t.style.color = 'var(--ink-deep)';
   t.textContent = p.name; h.appendChild(t);
@@ -3062,7 +3083,7 @@ function showBottle(k) {
   add2('Release', L.titleCase(p.scar));
   add2('Ohio retail', L.titleCase(p.alloc));
   const prem = L.premium(p.msrp, p.sec);
-  add2('Premium', prem ? prem + '\u00d7 over MSRP' : null);
+  add2(prem && prem < 1 ? 'Secondary' : 'Premium', L.premiumText(prem));
   add2('MSRP', p.msrp ? '$' + p.msrp : null);
   h.appendChild(dl2);
   body.appendChild(h);
@@ -5183,7 +5204,7 @@ function showFlight(f) {
   S.lastList = 'flights';
   const body = $('#detailBody'); body.innerHTML = '';
 
-  const fa = el('div', 'detail-acts');
+  const fa = detailActs();
   const fEdit = el('button', 'btn btn-sm btn-gold', 'Edit');
   fEdit.onclick = () => flightEditor(f);
   fa.appendChild(fEdit);
@@ -5203,7 +5224,6 @@ function showFlight(f) {
       toast('Recorded for ' + when);
     });
   fa.appendChild(fRun);
-  body.appendChild(fa);
   const head = el('div', 'sheet');
   const t = el('h2'); t.style.cssText = 'font-size:23px;color:var(--ink-deep)';
   t.textContent = L.sentenceCase(f.title);
@@ -5297,7 +5317,7 @@ function boot(data) {
   // Inside the scrolling screen, not on body: body is a flex column ending
   // with the nav, so anything appended after it lands below the bar.
   const f = el('footer');
-  f.innerHTML = 'Killer B\u2019s Bottle Tracker <span id="verString">v0.1.37</span>'
+  f.innerHTML = 'Killer B\u2019s Bottle Tracker <span id="verString">v0.1.38</span>'
     + ' \u00b7 <span id="buildTime"></span>';
   const home = document.getElementById('scr-home');
   if (home) home.appendChild(f);
