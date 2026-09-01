@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Killer B's Bottle Tracker — Whisky Shelf & Tasting Curriculum PWA
-     Version : v0.1.36  Build 2026-08-31 11:45 PM ET
+     Version : v0.1.37  Build 2026-08-31 11:51 PM ET
      Author  : BiZStoryGuru LLC
      Deploy  : upload index.html + sw.js + manifest.json + data.json
                + mark.png + icon-192.png + icon-512.png to GitHub repo root
@@ -11,6 +11,7 @@
 ============================================================ -->
 <!--
 CHANGELOG
+// v0.1.37  2026-08-31  The bottom of a scrolling page no longer looks like it runs behind the tab bar.
 // v0.1.36  2026-08-31  ship.py recorded on every run, which made it lie.
 // v0.1.35  2026-08-31  The last three US bottlers are on the map and two prices are corrected from Ohio state retail.
 // v0.1.34  2026-08-31  The nav bar can no longer cover content, using MadGolf's structure rather than more padding.
@@ -20,7 +21,6 @@ CHANGELOG
 // v0.1.30  2026-08-31  Build a flight is now an AI-assisted design, and Shop holds its answer on screen.
 // v0.1.29  2026-08-31  Three maps became one.
 // v0.1.28  2026-08-31  Eleven fixes from a session on the phone and a desktop.
-// v0.1.27  2026-08-31  Logo recoloured, type filter compacted, and the layout adapts to a desktop.
 // Older entries are in CHANGELOG.md.
 -->
 <html lang="en">
@@ -73,9 +73,21 @@ button{font:inherit;color:inherit;cursor:pointer}
 .screen{display:none}
 /* The active screen is the only thing that scrolls, inside a body sized to
    the viewport. The nav sits after it in the flex column, so nothing can
-   ever be underneath it. */
+   ever be underneath it.
+
+   The fade is the second half of that: a scrolling box clips whatever row
+   happens to meet its bottom edge, and a row sliced in half against the bar
+   reads as content hidden behind it. Fading the last few pixels makes the
+   cut deliberate, and the extra bottom padding means the final row can
+   always be scrolled clear of the fade. */
 .screen.on{display:block;flex:1;min-height:0;overflow-y:auto;
-  -webkit-overflow-scrolling:touch;padding:14px 14px 24px;width:100%}
+  -webkit-overflow-scrolling:touch;padding:14px 14px 40px;width:100%;
+  -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 22px),transparent);
+  mask-image:linear-gradient(to bottom,#000 calc(100% - 22px),transparent)}
+
+/* A hairline and a lift, so the bar reads as sitting above the page rather
+   than being part of it. */
+nav{box-shadow:0 -1px 0 rgba(26,22,19,.10), 0 -8px 18px rgba(26,22,19,.06)}
 .screen.on{display:block}
 .hdr{display:flex;align-items:center;justify-content:space-between;gap:10px;
   margin-bottom:12px;flex-wrap:wrap}
@@ -183,20 +195,25 @@ nav button[aria-current="page"]{color:#fff;box-shadow:inset 0 2px 0 var(--gold)}
   color:#fff}
 /* A list inside a card that could run long enough to bury what follows it. */
 .scrollbox{max-height:40vh;overflow-y:auto;margin-top:6px;
-  border-top:1px solid var(--line)}
+  border-top:1px solid var(--line);padding-bottom:10px;
+  -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 14px),transparent);
+  mask-image:linear-gradient(to bottom,#000 calc(100% - 14px),transparent)}
 /* Shop is a column: search fixed at the top, shelf data scrolling in the
    middle, the verdict held at the bottom where it can always be read. */
 .shopscreen.on{display:flex;flex-direction:column;
-  padding-bottom:8px;overflow:hidden}
+  padding-bottom:8px;overflow:hidden;
+  -webkit-mask-image:none;mask-image:none}
 /* Only the shelf scrolls. The bottle and the verdict are what you came for,
    so they hold the bottom of the screen and never move. */
 .shopscreen #shopScroll{flex:1 1 auto;overflow-y:auto;min-height:54px;
-  margin-top:10px;-webkit-overflow-scrolling:touch}
+  margin-top:10px;-webkit-overflow-scrolling:touch;padding-bottom:16px;
+  -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 18px),transparent);
+  mask-image:linear-gradient(to bottom,#000 calc(100% - 18px),transparent)}
 .shopscreen #shopFixed{flex:0 0 auto;margin-top:9px;
   border-top:1px solid var(--line);padding-top:9px;
   max-height:62vh;overflow-y:auto}
 .picklist{background:var(--card);border:1px solid var(--line);border-radius:9px;
-  margin-top:7px;overflow:hidden;box-shadow:0 6px 18px rgba(26,22,19,.14);
+  margin-top:7px;box-shadow:0 6px 18px rgba(26,22,19,.14);
   max-height:52vh;overflow-y:auto}
 .pickrow{display:grid;grid-template-columns:20px 1fr auto;gap:8px;width:100%;
   align-items:center;padding:9px 12px;background:none;border:0;
@@ -599,8 +616,8 @@ button.bar.tappable:hover .track,button.bar.tappable:focus-visible .track{
 
 <script>
 'use strict';
-const APP_VERSION = '0.1.36';
-const BUILD_TIME  = '2026-08-31 11:45 PM ET';
+const APP_VERSION = '0.1.37';
+const BUILD_TIME  = '2026-08-31 11:51 PM ET';
 
 /* =====================================================================
    PURE LOGIC — every function below is called by the test harness.
@@ -5280,7 +5297,7 @@ function boot(data) {
   // Inside the scrolling screen, not on body: body is a flex column ending
   // with the nav, so anything appended after it lands below the bar.
   const f = el('footer');
-  f.innerHTML = 'Killer B\u2019s Bottle Tracker <span id="verString">v0.1.36</span>'
+  f.innerHTML = 'Killer B\u2019s Bottle Tracker <span id="verString">v0.1.37</span>'
     + ' \u00b7 <span id="buildTime"></span>';
   const home = document.getElementById('scr-home');
   if (home) home.appendChild(f);
