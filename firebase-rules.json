@@ -1,0 +1,12 @@
+{
+  "rules": {
+    "bz-apps": {
+      "whisky": {
+        "$uid": {
+          ".read":  "auth != null && $uid === auth.uid",
+          ".write": "auth != null && $uid === auth.uid"
+        }
+      }
+    }
+  }
+}
