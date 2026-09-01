@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Killer B's Bottle Tracker — Whisky Shelf & Tasting Curriculum PWA
-     Version : v0.1.38  Build 2026-08-31 11:59 PM ET
+     Version : v0.1.39  Build 2026-09-01 12:19 AM ET
      Author  : BiZStoryGuru LLC
      Deploy  : upload index.html + sw.js + manifest.json + data.json
                + mark.png + icon-192.png + icon-512.png to GitHub repo root
@@ -11,6 +11,7 @@
 ============================================================ -->
 <!--
 CHANGELOG
+// v0.1.39  2026-09-01  Two ages corrected off their own labels, and a bug in the QA validator that hid one of them.
 // v0.1.38  2026-08-31  Back joined the action row, and a premium that was under retail stopped calling itself a premium.
 // v0.1.37  2026-08-31  The bottom of a scrolling page no longer looks like it runs behind the tab bar.
 // v0.1.36  2026-08-31  ship.py recorded on every run, which made it lie.
@@ -20,7 +21,6 @@ CHANGELOG
 // v0.1.32  2026-08-31  ship.py now tells you which files to redeploy instead of listing everything every time.
 // v0.1.31  2026-08-31  Charts are now a way in, the dashboard is reordered, and sealed is a question rather than an assumption.
 // v0.1.30  2026-08-31  Build a flight is now an AI-assisted design, and Shop holds its answer on screen.
-// v0.1.29  2026-08-31  Three maps became one.
 // Older entries are in CHANGELOG.md.
 -->
 <html lang="en">
@@ -620,8 +620,8 @@ button.bar.tappable:hover .track,button.bar.tappable:focus-visible .track{
 
 <script>
 'use strict';
-const APP_VERSION = '0.1.38';
-const BUILD_TIME  = '2026-08-31 11:59 PM ET';
+const APP_VERSION = '0.1.39';
+const BUILD_TIME  = '2026-09-01 12:19 AM ET';
 
 /* =====================================================================
    PURE LOGIC — every function below is called by the test harness.
@@ -5317,7 +5317,7 @@ function boot(data) {
   // Inside the scrolling screen, not on body: body is a flex column ending
   // with the nav, so anything appended after it lands below the bar.
   const f = el('footer');
-  f.innerHTML = 'Killer B\u2019s Bottle Tracker <span id="verString">v0.1.38</span>'
+  f.innerHTML = 'Killer B\u2019s Bottle Tracker <span id="verString">v0.1.39</span>'
     + ' \u00b7 <span id="buildTime"></span>';
   const home = document.getElementById('scr-home');
   if (home) home.appendChild(f);
