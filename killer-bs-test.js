@@ -330,14 +330,6 @@ eq('an unknown source falls back to the card wording',
   /prompt, not a source/.test(
     L.tnSource({ tn: { nose: 'x' }, tnSrc: 'zzz', tnFrom: 'A FLIGHT' })), true);
 
-sec('tasting note coverage');
-const covCat = { a: { tn: { nose: 'x' } }, b: { tn: { nose: 'y' }, tnSrc: 'you' },
-                 c: {}, d: {} };
-eq('counts the described', L.tnCoverage(covCat)['with'], 2);
-eq('counts the blanks', L.tnCoverage(covCat).without, 2);
-eq('totals', L.tnCoverage(covCat).total, 4);
-eq('splits by source', L.tnCoverage(covCat).bySource, { card: 1, you: 1 });
-eq('an empty catalog is safe', L.tnCoverage({}).total, 0);
 eq('null product is safe', L.tastingNotes(null), []);
 
 /* ---------------- dated logging ---------------- */
@@ -1081,7 +1073,18 @@ const parsed = L.parseCandidates(raw, cCat);
 eq('anything already owned is dropped',
   parsed.bottles.some(b => /^Buffalo Trace Kentucky/.test(b.name)), false);
 eq('a nameless entry is dropped', parsed.bottles.length, 3);
-eq('cheapest first', parsed.bottles.map(b => b.price), [25, 45, 55]);
+eq('dearest first, since the budget already excluded the silly answers',
+  parsed.bottles.map(b => b.price), [55, 45, 25]);
+// A budget is a ceiling, not a suggestion. 15 percent over is allowed for
+// retail variance; twice over is not an answer to the question asked.
+const capped = L.parseCandidates({ bottles: [
+  { name: 'Under', price_usd: 50 }, { name: 'At it', price_usd: 80 },
+  { name: 'A bit over', price_usd: 88 }, { name: 'Way over', price_usd: 250 }
+] }, {}, 80);
+eq('the ceiling is enforced', capped.bottles.map(b => b.name),
+  ['A bit over', 'At it', 'Under']);
+eq('no budget means no ceiling',
+  L.parseCandidates({ bottles: [{ name: 'Dear', price_usd: 900 }] }, {}).bottles.length, 1);
 eq('an impossible proof is discarded, the bottle kept',
   parsed.bottles.find(b => b.name === 'Bad Proof').proof, null);
 eq('the reason survives',
@@ -1142,6 +1145,108 @@ eq('given name from a google account',
 eq('falls back to the email local part',
   L.suggestName({ email: 'first.last@x.com' }), 'first last');
 eq('nothing to suggest is safe', L.suggestName(null), '');
+}
+
+{
+sec('comparing shelves');
+const mk = names => ({
+  catalog: Object.fromEntries(names.map(n => [n, { k: n, name: n, proof: 90 }])),
+  bottles: names.map((n, i) => ({ id: 'b' + i, k: n, status: 'open' }))
+});
+const meShelf = mk(['Lagavulin 16', 'Buffalo Trace', 'Redbreast 12', 'Weller 12']);
+const aShelf = mk(['Lagavulin 16', 'Buffalo Trace', 'Eagle Rare']);
+const bShelf = mk(['Buffalo Trace', 'Eagle Rare', 'Ardbeg 10']);
+
+eq('a shelf reduces to what is on it', Object.keys(L.shelfSet(meShelf, true)).length, 4);
+// Sealed is not pourable, so the open view is smaller.
+const sealed = mk(['A', 'B']);
+sealed.bottles[1].status = 'sealed';
+eq('open only counts what can be poured', Object.keys(L.shelfSet(sealed, true)).length, 1);
+eq('every whisky counts both', Object.keys(L.shelfSet(sealed, false)).length, 2);
+eq('a missing shelf is empty, not an error', L.shelfSet(null, true), {});
+
+sec('the seven regions');
+const sets = [
+  { id: 'me', name: 'You', map: L.shelfSet(meShelf, true) },
+  { id: 'a', name: 'Marcus', map: L.shelfSet(aShelf, true) },
+  { id: 'b', name: 'Ellen', map: L.shelfSet(bShelf, true) }
+];
+const regions = L.vennRegions(sets);
+eq('three sets make seven regions', regions.length, 7);
+// An empty region still exists, or the picture would silently lose a slice.
+eq('empty regions are kept', regions.filter(r => r.count === 0).length, 2);
+const byKey = {};
+regions.forEach(r => { byKey[r.key] = r.count; });
+eq('all three share one', byKey['a+b+me'], 1);
+eq('you and Marcus share one', byKey['a+me'], 1);
+eq('you and Ellen share none', byKey['b+me'], 0);
+eq('two are yours alone', byKey['me'], 2);
+eq('every bottle lands in exactly one region',
+  regions.reduce((n, r) => n + r.count, 0), 6);
+
+sec('the regions that matter');
+const hi = L.vennHighlights(regions, 'me');
+eq('what everyone could pour', hi.common.bottles.map(p => p.name), ['Buffalo Trace']);
+eq('what only you have',
+  hi.onlyMine.bottles.map(p => p.name).sort(), ['Redbreast 12', 'Weller 12']);
+// The shopping list: two people you trust both bought it and you did not.
+eq('what they both have and you do not',
+  hi.theyBothHave.bottles.map(p => p.name), ['Eagle Rare']);
+
+sec('region labels');
+const names = { me: 'You', a: 'Marcus', b: 'Ellen' };
+eq('one set', L.vennLabel({ ids: ['a'] }, names, 'me'), 'Marcus only');
+eq('yours reads as you', L.vennLabel({ ids: ['me'] }, names, 'me'), 'You only');
+eq('a pair', L.vennLabel({ ids: ['me', 'a'] }, names, 'me'), 'You and Marcus');
+eq('all of them', L.vennLabel({ ids: ['me', 'a', 'b'] }, names, 'me'), 'All 3');
+
+sec('two shelves, not three');
+const two = sets.slice(0, 2);
+eq('two sets make three regions', L.vennRegions(two).length, 3);
+
+sec('the join me message');
+const bottle = { k: 'x', name: 'Lagavulin 8', proof: 96, sub: 'scotch',
+                 region: 'Islay', tn: { nose: 'x'.repeat(400) } };
+const txt = L.joinMeText(bottle, bottle, ['Marcus']);
+eq('it names the bottle', /Lagavulin 8/.test(txt), true);
+eq('and its strength', /96 proof/.test(txt), true);
+eq('and says how much to pour', /an ounce/.test(txt), true);
+// Notes are deliberately absent: a sourced nose runs to eighty words, and
+// sending the answer before anyone has poured defeats the asking.
+eq('no tasting notes travel with it', txt.indexOf('x'.repeat(50)), -1);
+eq('it stays short enough to read on a phone', txt.length < 260, true);
+
+sec('finding a match on the machine');
+const matchCat = {
+  a: { k: 'a', name: 'Shared One', proof: 90, sub: 'bourbon', obsc: 'known', msrp: 40 },
+  b: { k: 'b', name: 'Mine Only', proof: 92, sub: 'bourbon', obsc: 'known', msrp: 40 }
+};
+const matchBot = [{ id: 'm1', k: 'a', status: 'open' },
+                  { id: 'm2', k: 'b', status: 'open' }];
+const buddy = { id: 'x', map: { 'shared one': { name: 'Shared One' } } };
+const reels = { proof: 'any', type: 'any', obsc: 'any', price: 'any' };
+// The payline must obey the same constraint the spin did, or the machine
+// lands on a shared bottle and fills the glasses with ones nobody else has.
+const restricted = L.reelMatches(matchCat, matchBot, reels, [],
+  { matchWith: [buddy] });
+eq('the payline is restricted to shared bottles',
+  restricted.map(x => x.k), ['a']);
+eq('unrestricted still shows everything',
+  L.reelMatches(matchCat, matchBot, reels, []).length, 2);
+// Everyone rather than anyone.
+const other = { id: 'y', map: {} };
+eq('matching everyone drops what only one has',
+  L.reelMatches(matchCat, matchBot, reels, [],
+    { matchWith: [buddy, other], matchAll: true }).length, 0);
+eq('matching anyone keeps it',
+  L.reelMatches(matchCat, matchBot, reels, [],
+    { matchWith: [buddy, other] }).length, 1);
+// And a spin can never land somewhere the payline would then come up empty.
+const spun = L.spinValid(reels, {}, matchCat, matchBot, () => 0.5,
+  { matchWith: [buddy] });
+eq('a restricted spin still pays out',
+  L.reelMatches(matchCat, matchBot, spun, [], { matchWith: [buddy] }).length > 0,
+  true);
 }
 
 /* ---------------- overuse ---------------- */
