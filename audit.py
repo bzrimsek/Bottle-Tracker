@@ -189,6 +189,13 @@ def run_audit(html_path):
         ('height:100dvh', 'body is not a fixed-height column'),
         ('.screen.on{display:block;flex:1', 'the active screen does not scroll'),
         ('overflow-y:auto', 'nothing scrolls inside the body'),
+        # A scrolling box slices whatever row meets its bottom edge, which
+        # reads as content hidden behind the nav. The fade makes the cut
+        # deliberate.
+        ('mask-image:linear-gradient(to bottom', 'the scroll edge does not fade'),
+        # The nav is above the overlay by rule 19, so a bottom-anchored
+        # modal must pad for it or its last buttons sit behind the bar.
+        ('padding:16px 15px calc(var(--nav-h)', 'the modal does not clear the nav'),
     ]
     bad = [why for needle, why in layout if needle not in css]
     if 'position:fixed;left:0;right:0;bottom:0' in css:
