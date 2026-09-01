@@ -843,6 +843,13 @@ eq('the only missing pour scores highest',
   fg.find(g => g.name === 'Longrow 18').weight, 100);
 eq('it names the flight it unlocks',
   fg.find(g => g.name === 'Longrow 18').flight, 'ONE SHORT');
+// The reason must stand on its own. Naming a flight only means something
+// to whoever wrote it, and once shelves are shared these are not the
+// reader's flights — so the reason says what the flight IS.
+eq('the reason describes the flight rather than naming it',
+  /ONE SHORT/.test(fg.find(g => g.name === 'Longrow 18').why), false);
+eq('and says what it is',
+  /pour/.test(fg.find(g => g.name === 'Longrow 18').why), true);
 
 // A sealed bottle you already own is the cheapest gap there is.
 const sealedShort = { title: 'SEALED', core: [{ k: 'a' }, { k: 's' }] };
@@ -1086,6 +1093,55 @@ eq('an empty list gives nothing back',
   L.parseCandidates({ bottles: [] }, cCat), null);
 eq('a list of things already owned gives nothing back',
   L.parseCandidates({ bottles: [{ name: 'Weller 12', price_usd: 40 }] }, cCat), null);
+}
+
+{
+sec('display names');
+eq('kept as typed', L.cleanName('BZ'), 'BZ');
+eq('runs of space collapse', L.cleanName('  Brian   Zrimsek  '), 'Brian Zrimsek');
+eq('apostrophes and hyphens survive', L.cleanName("Sean O'Brien-Smith"), "Sean O'Brien-Smith");
+eq('accents survive', L.cleanName('José'), 'José');
+eq('control characters do not', L.cleanName('BZ\u0000\u200b'), 'BZ');
+eq('capped at the limit', L.cleanName('x'.repeat(60)).length, L.NAME_MAX);
+eq('nothing is nothing', L.cleanName(null), '');
+
+sec('what a name may not be');
+eq('a good name passes', L.nameError('Marcus'), null);
+eq('too short is caught', /2 characters/.test(L.nameError('x')), true);
+eq('reserved names are caught', /reserved/.test(L.nameError('admin')), true);
+eq('reserved is case-insensitive', /reserved/.test(L.nameError('ADMIN')), true);
+// An email on a list that only needs a name is a contact address nobody
+// asked to publish.
+eq('an email is refused', /not an email/.test(L.nameError('b@example.com')), true);
+eq('one already in use is refused',
+  /already using/.test(L.nameError('Marcus', ['marcus'])), true);
+// Case and spacing fold, so two names cannot look identical in a picker.
+eq('spacing and case cannot disguise a clash',
+  /already using/.test(L.nameError('B Z', ['bz'])), true);
+eq('a different name is fine', L.nameError('Ellen', ['marcus']), null);
+
+sec('name keys');
+eq('folds case and punctuation', L.nameKey("Sean O'Brien"), 'seanobrien');
+eq('two spellings collide', L.nameKey('B Z'), L.nameKey('bz'));
+eq('different names do not', L.nameKey('Marcus') === L.nameKey('Ellen'), false);
+
+sec('what the directory may hold');
+// A whitelist, not a trim: adding a field to the profile must not quietly
+// widen what everyone else can see.
+const entry = L.directoryEntry('uid-123', '  BZ  ', true);
+eq('only uid, name and key', Object.keys(entry).sort(), ['key', 'name', 'uid']);
+eq('the name is cleaned', entry.name, 'BZ');
+// Off by default: not findable means no entry at all, not a hidden one.
+eq('not findable means no entry', L.directoryEntry('uid-123', 'BZ', false), null);
+eq('no name means no entry', L.directoryEntry('uid-123', '', true), null);
+eq('no uid means no entry', L.directoryEntry('', 'BZ', true), null);
+
+sec('suggesting one');
+eq('given name from a google account',
+  L.suggestName({ displayName: 'Brian Zrimsek', email: 'b@x.com' }), 'Brian');
+eq('falls back to the email local part',
+  L.suggestName({ email: 'first.last@x.com' }), 'first last');
+eq('nothing to suggest is safe', L.suggestName(null), '');
 }
 
 /* ---------------- overuse ---------------- */
