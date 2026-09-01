@@ -2,8 +2,9 @@
  * lookup.gs — Killer B's Bottle Tracker lookup backend.
  *
  * Two jobs, one deployment:
- *   1. doGet(?name=…)        one bottle, for the Add a bottle form.
- *   2. fillMissingNotes()    a batch run that sources tasting notes for the
+ *   1. doGet(?name=…)        one bottle, for the Shop and Add a bottle forms.
+ *   2. doPost({mode:'flight'}) designs a flight against the shelf you send.
+ *   3. fillMissingNotes()    a batch run that sources tasting notes for the
  *                            bottles that have none, and writes a CSV to
  *                            your Drive for review.
  *
@@ -35,7 +36,100 @@
  */
 
 var MODEL = 'claude-haiku-4-5-20251001';
+// Designing a flight is judgement across 300 bottles, not a fact lookup, so
+// it gets the larger model. It runs once per flight, not once per bottle.
+var FLIGHT_MODEL = 'claude-sonnet-4-6';
 var API = 'https://api.anthropic.com/v1/messages';
+
+/**
+ * Design a flight. POSTed because the shelf goes with the request.
+ *
+ * The model is given ONLY what is open, plus the house rules, and is told to
+ * pick from that list and nothing else. Everything it returns is checked
+ * against the real shelf in the app before a drop of it is shown: a bottle
+ * that is not there is dropped and reported, not poured. So the worst a bad
+ * answer can do is produce a short flight and a list of rejects.
+ */
+function doPost(e) {
+  var body;
+  try {
+    body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (err) {
+    return json({ error: 'bad request body' });
+  }
+  if (body.mode !== 'flight') return json({ error: 'unknown mode' });
+  try {
+    return json(designFlight(body));
+  } catch (err) {
+    return json({ error: String(err) });
+  }
+}
+
+function designFlight(req) {
+  var key = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_KEY');
+  if (!key) throw new Error('ANTHROPIC_KEY is not set in Script Properties');
+
+  var shelf = (req.shelf || []).map(function (b) {
+    return [b.n, b.pf + 'pf', b.t, b.f || '', b.r || '',
+            b.a ? b.a + 'yr' : '', b.o, b.pr ? '$' + b.pr : ''].join(' | ');
+  }).join('\n');
+
+  var shape = '{"title":string,"variable":string,"premise":string,'
+    + '"pours":[{"name":string,"note":string}],"why":[string],'
+    + '"buy":{"name":string,"why":string}}';
+
+  var system = [
+    'You design blind whisky tasting flights for one specific shelf.',
+    'Return ONLY a JSON object matching: ' + shape,
+    'No prose, no markdown fences.',
+    '',
+    'HOUSE RULES:',
+    (req.rules || []).map(function (r, i) { return (i + 1) + '. ' + r; }).join('\n'),
+    '',
+    'pours[].name MUST be copied EXACTLY from the shelf list, character for',
+    'character. A name not on that list will be rejected and the flight will',
+    'come up short. Order the pours as they should be served.',
+    'pours[].note says what that pour is doing in the flight, in one line.',
+    'why gives three or four short paragraphs on why it is built this way,',
+    'in the voice of someone hosting the night.',
+    'buy names ONE bottle NOT on the shelf that would improve the flight, and',
+    'says what it would add. Omit buy entirely if nothing would.'
+  ].join('\n');
+
+  var user = [
+    'THE VARIABLE: ' + (req.variable || '(choose one that this shelf supports)'),
+    req.premise ? 'THE PREMISE: ' + req.premise : '',
+    '',
+    'THE SHELF (name | proof | type | finish | region | age | recognition | price).',
+    'These are the ONLY bottles you may use:',
+    shelf
+  ].filter(String).join('\n');
+
+  var res = UrlFetchApp.fetch(API, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    payload: JSON.stringify({
+      model: FLIGHT_MODEL,
+      max_tokens: 2000,
+      system: system,
+      messages: [{ role: 'user', content: user }]
+    }),
+    muteHttpExceptions: true
+  });
+  if (res.getResponseCode() !== 200) {
+    throw new Error('API ' + res.getResponseCode() + ': '
+      + res.getContentText().slice(0, 200));
+  }
+  var data = JSON.parse(res.getContentText());
+  var text = (data.content || [])
+    .filter(function (b) { return b.type === 'text'; })
+    .map(function (b) { return b.text; })
+    .join('\n').replace(/```json|```/g, '').trim();
+  var a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a < 0 || b < 0) throw new Error('no JSON in the reply');
+  return JSON.parse(text.slice(a, b + 1));
+}
 
 /** One bottle, for the Add a bottle form. */
 function doGet(e) {

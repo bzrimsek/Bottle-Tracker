@@ -31,7 +31,20 @@ with an API key behind the Apps Script proxy?
 
 ---
 
+## 1b. Old Elk Infinity Blend  — needs one fact from BZ
+
+Flagged as missing from the catalog. Not added because Infinity Blend is an
+annual release and its proof changes every year (2021 was 114.6, later ones
+differ), so the release year and proof have to come from the bottle rather
+than be guessed. Add it through Shop or Shelf -> Add bottle once you have
+the label in front of you.
+
 ## 2. Multi-user / Firebase  — blocked on BZ
+
+The Settings screen now exists and holds the account section this will fill
+in. Still needs the Firebase project config and a decision on whether guests
+join a tasting by code or by account.
+
 
 Auth and shared data are designed but not wired. Needs the Firebase
 project config, and a decision on whether guests join a tasting by code

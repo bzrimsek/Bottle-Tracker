@@ -166,6 +166,19 @@ def run_audit(html_path):
         except Exception as e:
             fail('could not read mark.png: %s' % e)
 
+    # ── 10c. Anything a model returns must be verified ────────────
+    # The safety story for the AI features is that nothing reaches the screen
+    # without being checked against the real shelf.
+    if 'verifyProposal' in html:
+        for needle, why in [
+            ("L.PROPOSAL_MATCH", 'proposal name matching has no threshold'),
+            ("not on the shelf", 'proposals are not checked against the shelf'),
+            ("'not open'", 'proposals are not checked for pourability')]:
+            if needle not in html:
+                fail('AI proposals: ' + why)
+        else:
+            ok('model proposals are verified against the shelf')
+
     # ── 11. Manifest ──────────────────────────────────────────────
     mf = os.path.join(base, 'manifest.json')
     if not os.path.exists(mf):

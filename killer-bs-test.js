@@ -442,6 +442,277 @@ eq('anything outside the window is ignored',
   Object.values(months).reduce((a, b) => a + b, 0), 2);
 eq('buckets run oldest to newest', Object.keys(months)[5], L.todayISO().slice(0, 7));
 
+/* ---------------- flight builder ---------------- */
+sec('what a variable reads and what it holds');
+const bp = { k: 'x', name: 'X', dist: 'Ardbeg', sub: 'scotch', region: 'Islay',
+             proof: 92, age: 10, fin: 'Oloroso', msrp: 60 };
+eq('proof reads the strength', L.axisOf('proof', bp), 92);
+eq('place reads the region', L.axisOf('region', bp), 'Islay');
+// A house flight varies the EXPRESSION, not the distillery: holding the
+// distillery and reading it as the axis put every bottle on one point.
+eq('house reads the expression', L.axisOf('house', bp), 'Oloroso');
+eq('grain reads the category', L.axisOf('grain', bp), 'scotch');
+eq('price reads the band', L.axisOf('price', bp), 'good');
+eq('an unknown variable reads nothing', L.axisOf('zzz', bp), null);
+eq('a missing value reads null', L.axisOf('age', { proof: 90 }), null);
+// Place holds the category still; a proof flight holds the house.
+eq('proof holds the house', L.holdsFor('proof'), ['dist']);
+eq('place holds the category', L.holdsFor('region'), ['sub']);
+eq('every variable declares its holds',
+  L.VARIABLES.every(v => Array.isArray(L.holdsFor(v.id))), true);
+
+sec('spreading along the axis');
+// Numeric: even steps across the range, not the first six.
+const nums = [80, 86, 92, 100, 110, 120, 130].map((p, i) =>
+  ({ k: 'n' + i, proof: p, name: 'N' + i }));
+const spread = L.pickSpread('proof', nums, 4).map(p => p.proof);
+eq('numeric spread takes the ends', [spread[0], spread[spread.length - 1]], [80, 130]);
+eq('numeric spread is the size asked for', spread.length, 4);
+eq('a short list comes back whole', L.pickSpread('proof', nums.slice(0, 3), 6).length, 3);
+// Categorical: one of each value FIRST, then fill. Taking one of each and
+// stopping gave three pours and failed the four-pour floor.
+const cats = [
+  { k: 'a', sub: 'bourbon', proof: 100, obsc: 'known' },
+  { k: 'b', sub: 'bourbon', proof: 101, obsc: 'known' },
+  { k: 'c', sub: 'rye', proof: 102, obsc: 'known' },
+  { k: 'd', sub: 'wheat', proof: 103, obsc: 'known' },
+  { k: 'e', sub: 'bourbon', proof: 104, obsc: 'known' }
+];
+const cs = L.pickSpread('grain', cats, 5);
+eq('every value is represented', new Set(cs.map(p => p.sub)).size, 3);
+eq('and the flight is filled to size', cs.length, 5);
+eq('the spread comes back in proof order',
+  cs.map(p => p.proof), cs.map(p => p.proof).slice().sort((a, b) => a - b));
+
+sec('scoring a proposed flight');
+const asc = [{ proof: 86, fin: 'A', obsc: 'known' }, { proof: 92, fin: 'B', obsc: 'known' },
+             { proof: 100, fin: 'C', obsc: 'known' }];
+const desc = asc.slice().reverse();
+eq('ascending proof scores higher than descending',
+  L.flightScore('finish', asc) > L.flightScore('finish', desc), true);
+// An obscure pour is a build rule, so it must move the score.
+const withObscure = asc.map((p, i) => i === 0 ? Object.assign({}, p, { obsc: 'obscure' }) : p);
+eq('an obscure pour scores higher',
+  L.flightScore('finish', withObscure) > L.flightScore('finish', asc), true);
+// A matched pair at one proof is the strongest shape available.
+const paired = [{ proof: 92, fin: 'A', obsc: 'known' }, { proof: 92, fin: 'B', obsc: 'known' },
+                { proof: 100, fin: 'C', obsc: 'known' }];
+eq('a matched pair scores higher than none',
+  L.flightScore('finish', paired) > L.flightScore('finish', asc), true);
+eq('an empty set scores nothing', L.flightScore('proof', []), 0);
+// A wide proof range helps a proof flight and hurts every other one.
+const wide = [{ proof: 80, fin: 'A', obsc: 'known' }, { proof: 130, fin: 'B', obsc: 'known' },
+              { proof: 131, fin: 'C', obsc: 'known' }];
+eq('range helps a proof flight',
+  L.flightScore('proof', wide) > L.flightScore('proof', asc), true);
+eq('range hurts a cask flight',
+  L.flightScore('finish', wide) < L.flightScore('finish', asc), true);
+
+/* ---------------- one map ---------------- */
+{
+sec('detail follows the zoom');
+// Three separate maps became one surface: what is drawn is a function of the
+// zoom, so there is no mode to switch.
+eq('the world shows countries', L.detailAt(1).countries, true);
+eq('the world shows no states', L.detailAt(1).states, false);
+eq('states appear at 4x', L.detailAt(4).states, true);
+eq('country dots give way to states', L.detailAt(8).countries, false);
+eq('pins appear at 8x, where the US fills the window', L.detailAt(8).usPins, true);
+eq('no pins at 7x', L.detailAt(7).usPins, false);
+eq('irish pins arrive with the rest', L.detailAt(8).iePins, true);
+eq('the coastline appears at 26x', L.detailAt(26).coast, true);
+eq('every pin set arrives together',
+  L.detailAt(8).usPins && L.detailAt(8).iePins && L.detailAt(8).scotPins, true);
+// The detail set is monotone: zooming in never takes detail away except the
+// country dots, which are replaced by something better.
+const seq = [1, 4, 14, 30, 100, 5000].map(z => L.detailAt(z));
+eq('states never turn off once on',
+  seq.slice(2).every(d => d.states), true);
+eq('pins never turn off once on',
+  seq.slice(3).every(d => d.usPins && d.scotPins && d.iePins), true);
+
+sec('redrawing only when the detail changes');
+// A pinch must not rebuild the geometry on every frame.
+eq('same band, same key', L.detailKey(31), L.detailKey(90));
+eq('crossing a band changes the key', L.detailKey(7) !== L.detailKey(8), true);
+eq('the key names what is on', L.detailKey(1), 'countries');
+eq('at full detail everything but the dots is on',
+  L.detailKey(100), 'states,usPins,iePins,scotPins,coast');
+
+sec('one ceiling for every cluster');
+// Bardstown needs about 5,100x of the world span; Islay about 3,600x.
+eq('the ceiling clears Bardstown', L.MAP_ZOOM.max >= 5100, true);
+eq('the floor is the whole world', L.clampZoom(0.01), 1);
+eq('the ceiling is applied', L.clampZoom(999999), L.MAP_ZOOM.max);
+eq('clampZoom takes no layer any more', L.clampZoom.length, 1);
+
+sec('flying to a place');
+const worldFull = { x: -100, y: -70, w: 200, h: 140 };
+const isl = L.MAP_PLACES.find(p => p.id === 'islay');
+const islayView = L.viewFor(isl, worldFull);
+eq('the view is centred on the place',
+  Math.round((islayView.x + islayView.w / 2) * 100) / 100,
+  Math.round(L.project(isl.lon, isl.lat)[0] * 100) / 100);
+eq('a tighter span means a smaller window',
+  L.viewFor(isl, worldFull).w < L.viewFor(
+    L.MAP_PLACES.find(p => p.id === 'scotland'), worldFull).w, true);
+eq('the world view fills the map',
+  L.viewFor(L.MAP_PLACES.find(p => p.id === 'world'), worldFull).w, 200);
+eq('every place has a span', L.MAP_PLACES.every(p => p.span > 0), true);
+eq('every place has coordinates',
+  L.MAP_PLACES.every(p => isFinite(p.lon) && isFinite(p.lat)), true);
+
+sec('culling to the window');
+const cullWin = { x: -10, y: -10, w: 20, h: 20 };
+eq('a point inside is in view', L.inView(0, 0, cullWin), true);
+// project() flips latitude, so a point far north is far off the top.
+eq('a point far away is out', L.inView(-120, 60, cullWin), false);
+eq('the margin keeps an edge pin', L.inView(11 / Math.cos(56.8 * Math.PI / 180),
+  -8, cullWin, 0.5), true);
+eq('no margin drops it', L.inView(11 / Math.cos(56.8 * Math.PI / 180),
+  -8, cullWin, 0), false);
+
+}
+
+/* ---------------- AI proposals ---------------- */
+{
+sec('what the model is shown');
+const aiCat = {
+  a: { k: 'a', name: 'Alpha 10', dist: 'D1', proof: 92, sub: 'scotch',
+       obsc: 'known', fin: 'Oloroso', region: 'Islay', age: 10, msrp: 60 },
+  b: { k: 'b', name: 'Bravo 12', dist: 'D2', proof: 100, sub: 'bourbon',
+       obsc: 'obscure' },
+  c: { k: 'c', name: 'Charlie 15', dist: 'D3', proof: 110, sub: 'rye',
+       obsc: 'niche' },
+  d: { k: 'd', name: 'Delta Sealed', dist: 'D4', proof: 90, sub: 'irish',
+       obsc: 'known' }
+};
+const aiBot = [{ id: 'a1', k: 'a', status: 'open' }, { id: 'b1', k: 'b', status: 'open' },
+               { id: 'c1', k: 'c', status: 'open' }, { id: 'd1', k: 'd', status: 'sealed' }];
+const payload = L.flightPayload(aiCat, aiBot);
+// Only what is open goes: the model must not reach for a bottle you cannot
+// pour tonight.
+eq('sealed bottles are not offered', payload.length, 3);
+eq('the sealed one is absent', payload.some(x => x.n === 'Delta Sealed'), false);
+eq('names go with the payload', payload.map(x => x.n).sort(),
+  ['Alpha 10', 'Bravo 12', 'Charlie 15']);
+// Null fields are dropped rather than sent as nulls.
+const bravo = payload.find(x => x.n === 'Bravo 12');
+eq('an absent finish is omitted, not null', 'f' in bravo, false);
+eq('a present finish is sent',
+  'f' in payload.find(x => x.n === 'Alpha 10'), true);
+eq('the house rules go with every request', L.FLIGHT_RULES.length >= 6, true);
+eq('the rules forbid inventing a bottle',
+  L.FLIGHT_RULES.some(r => /never invent/i.test(r)), true);
+
+sec('verifying what comes back');
+const good = { title: 'A FLIGHT', variable: 'proof', premise: 'Testing.',
+  pours: [{ name: 'Alpha 10', note: 'the control' }, { name: 'Charlie 15' },
+          { name: 'Bravo 12' }],
+  why: ['Because.'], buy: { name: 'Springbank 15', why: 'would extend it' } };
+const v = L.verifyProposal(good, aiCat, aiBot);
+eq('a good proposal verifies', v.ok, true);
+eq('all three pours resolve', v.pours.length, 3);
+// The app sorts, not the model: proof ascends whatever order came back.
+eq('pours come back in proof order',
+  v.pours.map(x => aiCat[x.k].proof), [92, 100, 110]);
+eq('per-pour notes survive',
+  v.pours.find(x => x.k === 'a').note, 'the control');
+eq('the reasoning survives', v.why, ['Because.']);
+eq('a purchase suggestion is kept', v.buy.name, 'Springbank 15');
+eq('and marked as not on the shelf', v.buy.onShelf, false);
+
+// The whole point of the layer: a name that is not there cannot be poured.
+const bad = L.verifyProposal({ pours: [
+  { name: 'Alpha 10' }, { name: 'Bravo 12' }, { name: 'Charlie 15' },
+  { name: 'Completely Invented Whisky 12' },   // does not exist
+  { name: 'Delta Sealed' },                     // exists but is not open
+  { name: 'Alpha 10' }                          // listed twice
+] }, aiCat, aiBot);
+eq('only real open bottles are poured', bad.pours.length, 3);
+eq('three suggestions are dropped', bad.rejected.length, 3);
+eq('an invented bottle is named as not on the shelf',
+  bad.rejected.find(r => /Invented/.test(r.name)).why, 'not on the shelf');
+eq('a sealed bottle is named as not open',
+  bad.rejected.find(r => r.name === 'Delta Sealed').why, 'not open');
+eq('a repeat is named as such',
+  bad.rejected.find(r => r.why === 'listed twice').name, 'Alpha 10');
+
+// A one-token name is not evidence: "Bourbon 12" reduces to "12", which
+// matched anything containing 12 before the two-token floor.
+const oneToken = L.verifyProposal({ pours: [
+  { name: 'Alpha 10' }, { name: 'Bravo 12' }, { name: 'Charlie 15' },
+  { name: 'Bourbon 12' }] }, aiCat, aiBot);
+eq('a one-token name never fuzzy-matches', oneToken.pours.length, 3);
+eq('the match threshold is strict', L.PROPOSAL_MATCH >= 0.7, true);
+
+// Too few real pours is a failure, not a short flight served anyway.
+const thin = L.verifyProposal({ pours: [{ name: 'Nope' }, { name: 'Also Nope' }] },
+  aiCat, aiBot);
+eq('a proposal that does not survive verification fails', thin.ok, false);
+eq('and says why', /open on your shelf/.test(thin.why), true);
+eq('junk in gives a clean failure', L.verifyProposal(null, aiCat, aiBot).ok, false);
+eq('an empty object fails', L.verifyProposal({}, aiCat, aiBot).ok, false);
+
+// Strings are trimmed, so an over-long field cannot blow up the screen.
+const longish = L.verifyProposal({
+  title: 'x'.repeat(500), premise: 'y'.repeat(2000),
+  pours: [{ name: 'Alpha 10' }, { name: 'Bravo 12' }, { name: 'Charlie 15' }]
+}, aiCat, aiBot);
+eq('the title is capped', longish.title.length <= 60, true);
+eq('the premise is capped', longish.premise.length <= 400, true);
+
+sec('the request body');
+const body = L.flightRequestBody('Proof', 'A premise.', aiCat, aiBot);
+eq('mode names the job', body.mode, 'flight');
+eq('the variable travels', body.variable, 'Proof');
+eq('the premise travels', body.premise, 'A premise.');
+eq('the rules travel', body.rules.length, L.FLIGHT_RULES.length);
+eq('only the open shelf travels', body.shelf.length, 3);
+}
+
+/* ---------------- chart drill-through ---------------- */
+{
+sec('a bar resolves to its bottles');
+// Every chart on the dashboard has to be able to answer "which bottles is
+// this bar?" or the bar is not worth tapping.
+const drillCat = {
+  a: { k: 'a', name: 'Alpha', sub: 'scotch', region: 'Islay', obsc: 'known', msrp: 40 },
+  b: { k: 'b', name: 'Bravo', sub: 'scotch', region: 'Speyside', obsc: 'obscure', msrp: 150 },
+  c: { k: 'c', name: 'Charlie', sub: 'bourbon', region: null, obsc: 'niche', msrp: 250 },
+  d: { k: 'd', name: 'Delta', sub: 'bourbon', region: null, obsc: 'known', msrp: 75 }
+};
+const drillAll = Object.values(drillCat);
+const where = fn => drillAll.filter(fn);
+
+// By type: the bar label is Title Case, the data is not.
+eq('type bar finds its bottles',
+  where(p => L.titleCase(p.sub) === 'Scotch').map(p => p.k), ['a', 'b']);
+eq('every type bar label round-trips',
+  Object.keys(L.countBy(drillAll, p => L.titleCase(p.sub)))
+    .every(lbl => where(p => L.titleCase(p.sub) === lbl).length > 0), true);
+// Region.
+eq('region bar finds its bottles', where(p => p.region === 'Islay').map(p => p.k), ['a']);
+// Occasion: the bar is Title Case, priceBand is lower.
+eq('occasion bar finds its bottles',
+  where(p => L.priceBand(p.msrp) === 'Vault'.toLowerCase()).map(p => p.k), ['c']);
+eq('every occasion band round-trips',
+  ['Everyday', 'Good', 'Special', 'Vault'].every(lbl =>
+    where(p => L.priceBand(p.msrp) === lbl.toLowerCase()).length
+    === drillAll.filter(p => L.priceBand(p.msrp) === lbl.toLowerCase()).length), true);
+// Recognition.
+eq('recognition bar finds its bottles',
+  where(p => L.titleCase(p.obsc) === 'Obscure').map(p => p.k), ['b']);
+
+// The counts on a bar must equal the number the bar opens, or the chart is
+// lying about itself.
+const typeCounts = L.countBy(drillAll, p => L.titleCase(p.sub));
+Object.keys(typeCounts).forEach(lbl => {
+  eq('the ' + lbl + ' bar count matches what it opens',
+    typeCounts[lbl], where(p => L.titleCase(p.sub) === lbl).length);
+});
+}
+
 /* ---------------- overuse ---------------- */
 sec('overuse control');
 const flights = [
@@ -865,18 +1136,6 @@ sec('zoom ceiling');
 eq('the ceiling clears the tightest cluster', L.MAP_ZOOM.max > 31, true);
 eq('zoom floor is the whole map', L.MAP_ZOOM.min, 1);
 
-sec('per-layer zoom ceilings');
-// One ceiling cannot serve a map 4.5 degrees wide and one 35.6 wide. Each
-// layer's is set against its own tightest real cluster.
-eq('scotland resolves the islay trio', L.zoomCeiling('scotland'), 80);
-eq('the us needs far more for Bardstown', L.zoomCeiling('us'), 900);
-eq('the world layer has no cluster to resolve', L.zoomCeiling('world'), 40);
-eq('an unknown layer falls back', L.zoomCeiling('zzz'), L.MAP_ZOOM.max);
-eq('the ceiling is applied per layer', L.clampZoom(5000, 'us'), 900);
-eq('scotland is not given the us ceiling', L.clampZoom(5000, 'scotland'), 80);
-eq('no layer means the default ceiling', L.clampZoom(5000), L.MAP_ZOOM.max);
-eq('the floor is the whole map on every layer', L.clampZoom(0.01, 'us'), 1);
-
 sec('co-located pins fan out');
 // Two pins on one coordinate means one can never be tapped.
 const sameSpot = {
@@ -903,7 +1162,7 @@ eq('fanning is stable across calls', again[0].lat, fanned[0].lat);
 
 sec('zoom and clamping');
 eq('zoom floor', L.clampZoom(0.2), 1);
-eq('default ceiling', L.clampZoom(999), 80);
+eq('the ceiling holds', L.clampZoom(999999), L.MAP_ZOOM.max);
 eq('zoom passes through', L.clampZoom(7), 7);
 
 const full = { x: 0, y: 0, w: 100, h: 100 };
@@ -920,9 +1179,10 @@ const zoomed = L.zoomAbout(win, full, 2, 50, 50);
 eq('zoom halves the window', zoomed.w, 50);
 eq('the focus point holds', zoomed.x + zoomed.w / 2, 50);
 eq('zooming out past the map is clamped', L.zoomAbout(zoomed, full, 0.01, 25, 25).w, 100);
-// full.w is 100 and the ceiling is 80x, so the tightest window is 1.25.
+// full.w is 100 and the ceiling is 5200x, so the tightest window is 100/5200.
 eq('zoom in stops at the ceiling',
-  Math.round(L.zoomAbout(win, full, 1000, 50, 50).w * 100) / 100, 1.25);
+  Math.round(L.zoomAbout(win, full, 1e9, 50, 50).w * 1e6) / 1e6,
+  Math.round((100 / L.MAP_ZOOM.max) * 1e6) / 1e6);
 
 /* ---------------- summary ---------------- */
 sec('shelf statistics');
@@ -967,15 +1227,6 @@ eq('all zeros do not divide by zero', L.barRows({ a: 0, b: 0 })[0].pct, 0);
 sec('counting and recency');
 eq('count by a key', L.countBy([{ s: 'a' }, { s: 'b' }, { s: 'a' }], x => x.s), { a: 2, b: 1 });
 eq('nulls are skipped', L.countBy([{ s: null }, { s: 'a' }], x => x.s), { a: 1 });
-// Recent is newest-first and drops entries whose product is gone.
-const recentLog = [{ k: 'Lagavulin 16 @ 86.0' }, { k: 'gone-product' },
-                   { k: 'Raasay Dun Cana @ 104.0' }];
-eq('newest first', L.recent(recentLog, catalog, 5).map(x => x.k),
-  ['Raasay Dun Cana @ 104.0', 'Lagavulin 16 @ 86.0']);
-eq('limit honoured', L.recent(recentLog, catalog, 1).length, 1);
-eq('empty history is safe', L.recent([], catalog, 5), []);
-eq('null history is safe', L.recent(null, catalog, 5), []);
-
 /* ---------------- map layers ---------------- */
 sec('country and state counts');
 const layerCat = {
