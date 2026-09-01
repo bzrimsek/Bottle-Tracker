@@ -117,6 +117,23 @@ eq('type and status combine', L.shelfFilter(shelfProds, bottles,
 eq('no match returns empty', L.shelfFilter(shelfProds, bottles,
   { status: 'open', q: 'zzz' }).length, 0);
 
+
+sec('premium wording');
+// A ratio under 1 means the secondary is BELOW retail. Calling that a
+// premium states the opposite of what the number means -- Ardbeg Wee
+// Beastie read "0.56x over MSRP" when 0.56x is a discount.
+eq('above retail is a premium', L.premiumText(2.5), '2.5\u00d7 over MSRP');
+eq('below retail says so', L.premiumText(0.56), '0.56\u00d7 MSRP \u2014 under retail');
+eq('never says over when it is under', /over/.test(L.premiumText(0.56)), false);
+eq('at retail is neither', L.premiumText(1), 'about MSRP');
+eq('a whisker above is still about', L.premiumText(1.01), 'about MSRP');
+eq('a whisker below is still about', L.premiumText(0.99), 'about MSRP');
+eq('nothing to say when there is no ratio', L.premiumText(null), null);
+eq('zero shows nothing', L.premiumText(0), null);
+// The real bottle from the screenshot.
+eq('wee beastie reads as under retail',
+  /under retail/.test(L.premiumText(L.premium(53.99, 30))), true);
+
 sec('shelf facets');
 // Every facet is an independent AND gate; an empty list turns it off.
 const facetCat = {
@@ -711,6 +728,310 @@ Object.keys(typeCounts).forEach(lbl => {
   eq('the ' + lbl + ' bar count matches what it opens',
     typeCounts[lbl], where(p => L.titleCase(p.sub) === lbl).length);
 });
+}
+
+/* ---------------- pours that are not a bottle ---------------- */
+{
+sec('the three kinds of pour');
+const wCat = {
+  a: { k: 'a', name: 'Weller 12', proof: 90 },
+  d: { k: 'd', name: 'Weller Antique 107', proof: 107 },
+  s: { k: 's', name: 'Sealed One', proof: 100 }
+};
+const wBot = [{ id: 'w1', k: 'a', status: 'open' }, { id: 'w2', k: 'd', status: 'open' },
+              { id: 'w3', k: 's', status: 'sealed' }];
+const shelfPour = { k: 'a' };
+const wishPour = { kind: 'wish', name: 'Pappy Van Winkle 15 Year', proof: 107 };
+const blendPour = { kind: 'blend', name: "Poor Man's Pappy", parts: ['a', 'd'],
+                    ratio: [1, 1] };
+
+eq('a bare key is a shelf pour', L.pourKind(shelfPour), 'shelf');
+eq('a wish is a wish', L.pourKind(wishPour), 'wish');
+eq('a blend is a blend', L.pourKind(blendPour), 'blend');
+eq('nothing is a shelf pour', L.pourKind(null), 'shelf');
+
+// A blend of two open bottles CAN be poured tonight, which is the whole
+// reason it is modelled rather than dropped.
+eq('an open bottle is pourable', L.pourAvailable(shelfPour, wCat, wBot), true);
+eq('a blend of open bottles is pourable',
+  L.pourAvailable(blendPour, wCat, wBot), true);
+eq('a wish never is', L.pourAvailable(wishPour, wCat, wBot), false);
+eq('a blend needing a sealed bottle is not',
+  L.pourAvailable({ kind: 'blend', parts: ['a', 's'] }, wCat, wBot), false);
+eq('a blend with no parts is not',
+  L.pourAvailable({ kind: 'blend', parts: [] }, wCat, wBot), false);
+
+// Equal parts of 90 and 107 is 98.5 — the ladder must place it there, not
+// treat it as unknown.
+eq('a blend proof is the weighted mean', L.blendProof(blendPour, wCat), 98.5);
+eq('an uneven blend weights correctly',
+  L.blendProof({ parts: ['a', 'd'], ratio: [3, 1] }, wCat), 94.3);
+eq('a blend with an unknown part is null',
+  L.blendProof({ parts: ['zzz'] }, wCat), null);
+eq('pourProof reads a shelf bottle', L.pourProof(shelfPour, wCat), 90);
+eq('pourProof reads a blend', L.pourProof(blendPour, wCat), 98.5);
+eq('pourProof reads a stated wish proof', L.pourProof(wishPour, wCat), 107);
+
+eq('a shelf pour is labelled from the catalog', L.pourLabel(shelfPour, wCat), 'Weller 12');
+eq('a blend is labelled by its own name', L.pourLabel(blendPour, wCat), "Poor Man's Pappy");
+
+sec('flight shape');
+const mixed = { title: 'MIXED', core: [shelfPour, wishPour, blendPour, { k: 'd' }] };
+const shape = L.flightShape(mixed, wCat, wBot);
+eq('counts every kind', [shape.shelf, shape.wish, shape.blend], [2, 1, 1]);
+eq('three of four are pourable tonight', shape.ready, 3);
+// A design with a wish in it is complete but not runnable — a different
+// thing from a broken flight, which is what the old count reported.
+eq('not runnable while a wish is unmet', shape.runnable, false);
+eq('runnable once nothing is missing',
+  L.flightShape({ core: [shelfPour, { k: 'd' }, blendPour, { k: 'a' }] },
+    wCat, wBot).runnable, true);
+
+sec('the wishlist');
+let wl = [];
+wl = L.wishAdd(wl, { name: 'Pappy 15', reason: 'completes a flight', added: '2026-01-01' });
+eq('adds one', wl.length, 1);
+eq('keeps the reason', wl[0].reason, 'completes a flight');
+wl = L.wishAdd(wl, { name: 'pappy 15', added: '2026-06-01' });
+eq('the same bottle does not duplicate', wl.length, 1);
+// Re-adding keeps what you knew before rather than blanking it.
+eq('the original date is kept', wl[0].added, '2026-01-01');
+eq('the earlier reason survives a bare re-add', wl[0].reason, 'completes a flight');
+eq('recognised however it is typed', L.onWishlist(wl, 'PAPPY 15'), true);
+eq('not on the list', L.onWishlist(wl, 'Something Else'), false);
+wl = L.wishRemove(wl, 'Pappy 15');
+eq('removing works', wl.length, 0);
+eq('removing something absent is safe', L.wishRemove([], 'x').length, 0);
+eq('a nameless entry is ignored', L.wishAdd([], { name: '  ' }).length, 0);
+
+// A bottle wanted by two flights is one entry naming both.
+const flights = [
+  { title: 'ONE', core: [{ kind: 'wish', name: 'Longrow 18' }] },
+  { title: 'TWO', core: [{ kind: 'wish', name: 'Longrow 18' }, { k: 'a' }] }
+];
+const fromFlights = L.wishFromFlights(flights);
+eq('one entry per bottle', fromFlights.length, 1);
+eq('naming every flight it unlocks', fromFlights[0].flights, ['ONE', 'TWO']);
+eq('no flights, no wishes', L.wishFromFlights([]), []);
+}
+
+/* ---------------- what is missing ---------------- */
+{
+sec('gaps from flights');
+const gCat = {
+  a: { k: 'a', name: 'Alpha', dist: 'D1', sub: 'scotch', region: 'Islay', proof: 90 },
+  b: { k: 'b', name: 'Bravo', dist: 'D1', sub: 'scotch', region: 'Islay', proof: 100 },
+  s: { k: 's', name: 'Sealed', dist: 'D2', sub: 'bourbon', proof: 95 }
+};
+const gBot = [{ id: 'g1', k: 'a', status: 'open' }, { id: 'g2', k: 'b', status: 'open' },
+              { id: 'g3', k: 's', status: 'sealed' }];
+
+// One pour short is worth acting on; four short is a different flight.
+const oneShort = { title: 'ONE SHORT', core: [{ k: 'a' }, { k: 'b' },
+  { kind: 'wish', name: 'Longrow 18' }] };
+const manyShort = { title: 'MANY SHORT', core: [{ k: 'a' },
+  { kind: 'wish', name: 'W1' }, { kind: 'wish', name: 'W2' },
+  { kind: 'wish', name: 'W3' }] };
+const complete = { title: 'COMPLETE', core: [{ k: 'a' }, { k: 'b' }] };
+
+const fg = L.gapsFromFlights([oneShort, manyShort, complete], gCat, gBot);
+eq('one bottle short is reported', fg.some(g => g.name === 'Longrow 18'), true);
+eq('a complete flight is not', fg.some(g => g.flight === 'COMPLETE'), false);
+// Three missing is not a shopping list, it is a redesign.
+eq('three short is not reported', fg.some(g => g.flight === 'MANY SHORT'), false);
+eq('the only missing pour scores highest',
+  fg.find(g => g.name === 'Longrow 18').weight, 100);
+eq('it names the flight it unlocks',
+  fg.find(g => g.name === 'Longrow 18').flight, 'ONE SHORT');
+
+// A sealed bottle you already own is the cheapest gap there is.
+const sealedShort = { title: 'SEALED', core: [{ k: 'a' }, { k: 's' }] };
+const sg = L.gapsFromFlights([sealedShort], gCat, gBot);
+eq('a sealed bottle you own is flagged as owned', sg[0].owned, true);
+
+sec('gaps from thinness');
+const thin = L.gapsFromThinness(gCat);
+eq('a region with nothing is reported',
+  thin.some(g => g.kind === 'region' && /Speyside/.test(g.name)), true);
+eq('a region with two islay bottles is still thin',
+  thin.some(g => /Islay/.test(g.name)), true);
+eq('a lone category is reported',
+  thin.some(g => g.kind === 'category' && /Bourbon/.test(g.name)), true);
+// Two scotches is not enough to compare, so scotch is thin too.
+eq('every finding carries a reason', thin.every(g => !!g.why), true);
+
+sec('gaps from matched pairs');
+// A house with three bottles and no two at one strength cannot hold the
+// variable still, which is what a matched pair is for.
+const pairCat = {
+  x: { k: 'x', dist: 'House', proof: 90 }, y: { k: 'y', dist: 'House', proof: 100 },
+  z: { k: 'z', dist: 'House', proof: 110 }
+};
+const pairBot = ['x', 'y', 'z'].map((k, i) => ({ id: 'p' + i, k: k, status: 'open' }));
+eq('a house with no pair is reported',
+  L.gapsFromPairs(pairCat, pairBot).length, 1);
+// Add a second at 90 and the pair exists, so the gap goes away.
+const paired = Object.assign({}, pairCat, { w: { k: 'w', dist: 'House', proof: 90 } });
+const pairedBot = pairBot.concat([{ id: 'p9', k: 'w', status: 'open' }]);
+eq('a house with a pair is not', L.gapsFromPairs(paired, pairedBot).length, 0);
+
+sec('ranking and de-duplication');
+// A sealed bottle you own outranks anything you would have to buy.
+const ranked = L.shelfGaps(gCat, gBot, [sealedShort, oneShort], []);
+eq('the owned one comes first', ranked[0].owned, true);
+eq('flights outrank thinness',
+  L.GAP_KINDS.indexOf(ranked[0].kind) < L.GAP_KINDS.indexOf('region'), true);
+// A bottle two flights want is one thing to buy, not two.
+const twice = [{ title: 'F1', core: [{ k: 'a' }, { kind: 'wish', name: 'Same One' }] },
+               { title: 'F2', core: [{ k: 'b' }, { kind: 'wish', name: 'Same One' }] }];
+eq('one entry for a bottle two flights want',
+  L.shelfGaps(gCat, gBot, twice, []).filter(g => g.name === 'Same One').length, 1);
+
+// A wishlist entry a flight already explains is not repeated.
+const wl = [{ name: 'Longrow 18', added: '2026-01-01' },
+            { name: 'Just Because', reason: 'looked good', added: '2026-01-02' }];
+const withWish = L.shelfGaps(gCat, gBot, [oneShort], wl);
+eq('a wish covered by a flight is not repeated',
+  withWish.filter(g => g.name === 'Longrow 18').length, 1);
+eq('a wish nothing explains still appears',
+  withWish.some(g => g.name === 'Just Because'), true);
+eq('and it keeps the reason you gave',
+  withWish.find(g => g.name === 'Just Because').why, 'looked good');
+eq('an empty shelf is safe', L.shelfGaps({}, [], [], []).length >= 0, true);
+}
+
+{
+sec('extension and contrast');
+// A house you have committed to is not a gap, it is a preference. The
+// useful suggestion works WITH it rather than telling you to buy elsewhere.
+const houseCat = {};
+for (let i = 0; i < 6; i++) {
+  houseCat['h' + i] = { k: 'h' + i, name: 'House ' + i, dist: 'BigHouse',
+                        proof: 90 + i, sub: 'bourbon' };
+}
+const houseBot = Object.keys(houseCat).map((k, i) =>
+  ({ id: 'hb' + i, k: k, status: 'open' }));
+const hg = L.gapsFromHouses(houseCat, houseBot);
+eq('a house with six bottles in a narrow band is flagged',
+  hg.some(g => /very different strength/.test(g.name)), true);
+eq('and it is an extension, not a hole', hg[0].kind, 'extend');
+// Three bottles is not yet a commitment worth a suggestion.
+const small = { a: { k: 'a', dist: 'Small', proof: 90 },
+                b: { k: 'b', dist: 'Small', proof: 91 },
+                c: { k: 'c', dist: 'Small', proof: 92 } };
+eq('three bottles is not a commitment', L.gapsFromHouses(small, []).length, 0);
+// A wide spread of strengths means that axis is already explored; the
+// suggestion should move to a different one.
+const wide = {};
+[90, 95, 100, 120, 130].forEach((p, i) => {
+  wide['w' + i] = { k: 'w' + i, dist: 'Wide', proof: p };
+});
+eq('a house already spread on proof gets a different suggestion',
+  /strength/.test((L.gapsFromHouses(wide, [])[0] || {}).name || ''), false);
+// Never more than three, or the list is eight near-identical lines.
+const many = {};
+for (let d = 0; d < 8; d++) {
+  for (let i = 0; i < 5; i++) {
+    many['d' + d + 'b' + i] = { k: 'd' + d + 'b' + i, dist: 'H' + d, proof: 90 + i };
+  }
+}
+eq('at most three extensions', L.gapsFromHouses(many, []).length, 3);
+// Deeper commitment outranks shallower.
+eq('the biggest house ranks first',
+  L.gapsFromHouses(many, [])[0].weight >= L.gapsFromHouses(many, [])[2].weight, true);
+
+sec('contrast');
+const lop = {};
+for (let i = 0; i < 30; i++) {
+  lop['c' + i] = { k: 'c' + i, name: 'W' + i, wine: true, fin: 'Sherry', proof: 90 };
+}
+lop.wood = { k: 'wood', name: 'Wood', wine: false, fin: 'Toasted Oak', proof: 90 };
+const cg = L.gapsFromContrast(lop, []);
+eq('a lopsided cask split is reported',
+  cg.some(g => /wood-only/.test(g.name)), true);
+eq('it is a contrast, not a shortage', cg.find(g => /wood-only/.test(g.name)).kind,
+  'contrast');
+// A balanced shelf has nothing to say here.
+const balanced = { a: { k: 'a', wine: true, proof: 90 },
+                   b: { k: 'b', wine: false, proof: 90 } };
+eq('a balanced shelf raises no contrast',
+  L.gapsFromContrast(balanced, []).some(g => /wood-only/.test(g.name)), false);
+
+sec('flights only count when flights get run');
+const fCat2 = { a: { k: 'a', name: 'A', dist: 'D', proof: 90 } };
+const fBot2 = [{ id: 'x', k: 'a', status: 'open' }];
+const oneAway = { title: 'ONE AWAY',
+  core: [{ k: 'a' }, { kind: 'wish', name: 'Missing One' }] };
+const never = L.shelfGaps(fCat2, fBot2, [oneAway], [], []);
+const often = L.shelfGaps(fCat2, fBot2, [oneAway], [],
+  Array.from({ length: 6 }, (_, i) => ({ kind: 'flight', flight: 'F' + i })));
+const wNever = never.find(g => g.name === 'Missing One').weight;
+const wOften = often.find(g => g.name === 'Missing One').weight;
+// 36 flights designed and none run makes unlocking one a hypothesis.
+eq('unlocking a flight is worth less when none are run', wNever < wOften, true);
+eq('and worth full value once they are', wOften, 100);
+eq('history is optional', L.shelfGaps(fCat2, fBot2, [oneAway], []).length > 0, true);
+}
+
+{
+sec('running a flight again');
+const rCat = {};
+['a','b','c','d','e','f','g','h'].forEach((k, i) => {
+  rCat[k] = { k: k, name: 'Bottle ' + k.toUpperCase(), dist: 'House',
+              sub: 'scotch', proof: 90 + i * 4, fin: 'Fin' + i, obsc: 'known' };
+});
+rCat.x = { k: 'x', name: 'Bourbon One', dist: 'Other', sub: 'bourbon',
+           proof: 100, fin: 'Sherry', obsc: 'known' };
+const rBot = Object.keys(rCat).map((k, i) => ({ id: 'r' + i, k: k, status: 'open' }));
+const flight = { title: 'A CASK FLIGHT', tag: 'ONE VARIABLE: WHICH CASK',
+                 core: ['a','b','c','d'].map(k => ({ k: k })) };
+
+// The variable is read back from the tag, so a re-cast knows what to hold.
+eq('the variable is read from the tag', L.variableOfId(flight), 'finish');
+eq('a proof flight reads as proof',
+  L.variableOfId({ tag: 'ONE VARIABLE: PROOF' }), 'proof');
+eq('an untagged flight has no variable', L.variableOfId({ tag: '' }), null);
+
+sec('run history');
+const hist = [
+  { kind: 'flight', flight: 'A CASK FLIGHT', at: '2026-03-01', pours: ['a','b'] },
+  { kind: 'flight', flight: 'A CASK FLIGHT', at: '2026-01-01', pours: ['c'] },
+  { kind: 'flight', flight: 'ANOTHER', at: '2026-02-01', pours: ['d'] },
+  { kind: 'pour', k: 'a', at: '2026-02-02' }
+];
+const runs = L.flightRuns(flight, hist);
+eq('only this flight counts', runs.length, 2);
+eq('oldest first, numbered', runs.map(r => r.run), [1, 2]);
+eq('and dated in order', runs.map(r => r.at), ['2026-01-01', '2026-03-01']);
+eq('every bottle it has ever used',
+  Object.keys(L.pouredBefore(flight, hist)).sort(), ['a', 'b', 'c']);
+eq('a flight never run has no history', L.flightRuns(flight, []), []);
+
+sec('re-casting');
+const rc = L.recastFlight(flight, rCat, rBot, hist);
+eq('it produces a cast', rc.ok, true);
+eq('numbered as the next run', rc.run, 3);
+eq('the same variable is held', rc.variable, 'finish');
+// The flight is all Scotch; the re-cast must not quietly become bourbon.
+eq('the cast keeps the flight\u2019s own category', rc.held, 'scotch');
+eq('and no bourbon creeps in',
+  rc.pours.every(p => rCat[p.k].sub === 'scotch'), true);
+// Bottles poured before are pushed back, so run three is not run one again.
+eq('it prefers bottles not used before', rc.fresh >= 3, true);
+eq('pours come back in proof order',
+  rc.pours.map(p => rCat[p.k].proof),
+  rc.pours.map(p => rCat[p.k].proof).slice().sort((a, b) => a - b));
+eq('previous run is reported', rc.previous.at, '2026-03-01');
+
+// A flight with no stated variable cannot be re-cast, and says so.
+eq('no variable, no re-cast',
+  L.recastFlight({ title: 'X', tag: '', core: [] }, rCat, rBot, []).ok, false);
+eq('and it explains why',
+  /single variable/.test(L.recastFlight({ title: 'X', tag: '', core: [] },
+    rCat, rBot, []).why), true);
+// A first re-cast of a never-run flight is run 1.
+eq('never run means run one',
+  L.recastFlight(flight, rCat, rBot, []).run, 1);
 }
 
 /* ---------------- overuse ---------------- */
@@ -1632,6 +1953,73 @@ eq('every reel face is Title Case', badFace, []);
 const usPins = L.mapPins(data.catalog, mapData.usDistilleries, data.bottles, L.US_SUBS);
 const scPins = L.mapPins(data.catalog, mapData.distilleries, data.bottles, ['scotch']);
 const iePins = L.mapPins(data.catalog, mapData.ieDistilleries, data.bottles, ['irish']);
+// The gap analysis against the real shelf.
+// No flights have been run, so the list is led by what the shelf says on
+// its own merits rather than by a flight nobody has poured.
+const realGaps = L.shelfGaps(data.catalog, data.bottles, data.flights, [], []);
+eq('the shelf produces findings', realGaps.length > 0, true);
+eq('with no flights run, a shelf observation leads',
+  ['contrast', 'extend'].indexOf(realGaps[0].kind) >= 0, true);
+// 97 wine-cask against 13 wood-only is a contrast BZ cannot currently taste.
+eq('the lopsided cask split is the top finding',
+  /wood-only/.test(realGaps[0].name), true);
+// Once flights get run, the bottle that completes one takes the lead.
+const runGaps = L.shelfGaps(data.catalog, data.bottles, data.flights, [],
+  Array.from({ length: 6 }, (_, i) => ({ kind: 'flight', flight: 'F' + i })));
+eq('once flights are run, the bottle that unlocks one leads',
+  /Longrow 18/.test(runGaps[0].name), true);
+eq('and it names the flight', runGaps[0].flight, 'PEAT IS A POSTCODE');
+// Buffalo Trace is 24 bottles with no finished bottling — a real
+// observation about the shelf that has nothing to do with flights.
+eq('the deepest house gets an extension suggestion',
+  realGaps.some(g => g.kind === 'extend' && /Buffalo Trace/.test(g.name)), true);
+eq('every finding has a name and a reason',
+  realGaps.every(g => g.name && g.why), true);
+eq('every finding is a known kind',
+  realGaps.every(g => L.GAP_KINDS.indexOf(g.kind) >= 0), true);
+// Campbeltown and Lowland hold one bottle each and cannot carry a flight.
+eq('both thin scotch regions are flagged',
+  ['Campbeltown', 'Lowland'].every(r =>
+    realGaps.some(g => g.kind === 'region' && g.name.indexOf(r) >= 0)), true);
+// Never suggest buying something already open on the shelf.
+eq('nothing suggested is already pourable',
+  realGaps.filter(g => g.kind === 'flight' && !g.owned)
+    .filter(g => Object.values(data.catalog).some(p =>
+      p.name === g.name && L.pourable(p.k, data.bottles))).length, 0);
+
+// Re-casting a real flight: same question, different whisky, and the
+// flight's own constraints survive.
+const sherry = data.flights.find(f => f.title === 'SHERRY IS NOT ONE THING');
+const sherryHist = [{ kind: 'flight', flight: sherry.title, at: '2026-01-15',
+                      pours: sherry.core.map(p => p.k) }];
+const recast = L.recastFlight(sherry, data.catalog, data.bottles, sherryHist);
+eq('a real flight re-casts', recast.ok, true);
+eq('it is run two', recast.run, 2);
+// The flight is all Scotch, no smoke. Holding only the variable produced
+// five Irish Spots — a fine flight, and a different one.
+eq('it stays all scotch', recast.held, 'scotch');
+eq('and every pour really is scotch',
+  recast.pours.every(p => data.catalog[p.k].sub === 'scotch'), true);
+eq('nothing from the first run is reused', recast.fresh, recast.pours.length);
+
+
+// Tasting notes across the real shelf, and where each set came from.
+const withTn = Object.values(data.catalog).filter(p => p.tn);
+eq('197 products carry tasting notes', withTn.length, 197);
+eq('every note set has at least three columns',
+  withTn.every(p => L.tastingNotes(p).length >= 3), true);
+// Twelve are now sourced from WHISKY:EDITION rather than written by me for
+// a flight card. The two must never be confusable.
+const sourced = Object.values(data.catalog).filter(p => p.tnSrc === 'review');
+eq('twelve note sets are sourced', sourced.length, 12);
+eq('a sourced note is never also credited to a card',
+  sourced.filter(p => p.tnFrom).length, 0);
+eq('every note set records its origin one way or the other',
+  withTn.every(p => !!p.tnFrom || !!p.tnSrc), true);
+eq('notes always come back in sheet order',
+  withTn.every(p => L.tastingNotes(p).map(n => n.label.toLowerCase()).join()
+    === L.TN_ORDER.filter(k => p.tn[k]).join()), true);
+
 eq('56 US distilleries plotted', usPins.length, 56);
 eq('185 US bottles sit on a pin', usPins.reduce((n, p) => n + p.total, 0), 185);
 eq('47 irish bottles sit on a pin', iePins.reduce((n, p) => n + p.total, 0), 47);
@@ -1688,6 +2076,32 @@ eq('Green Spot Montelena is Zinfandel, not Bordeaux',
 eq('and priced at Ohio retail', data.catalog['Green Spot Montelena'].msrp, 99.99);
 eq('Basil Hayden is a forty dollar bourbon',
   data.catalog['Basil Hayden Bourbon'].msrp, 39.99);
+// Ages confirmed off the label, both found by following a single correction.
+eq('Wee Beastie is a five year old',
+  data.catalog['Ardbeg Wee Beastie'].age, 5);
+eq("Booker's Beam House states seven in its own name",
+  data.catalog["Booker's 2024-02 The Beam House Batch 7 Year Old Kentucky Straight Bourbon Whiskey"].age, 7);
+// Every age stated in a name must be stored. validate.py enforces this, but
+// it missed the Booker's because its batch mask ate the age; pin the shape
+// here too so the harness would catch a repeat independently.
+const nameAge = n => {
+  const masked = String(n)
+    .replace(/\b(batch|pact|chapter|build|no\.?)\s*\d+(?!\s*(?:yr|yrs|year|years|yo)\b)/gi, ' ')
+    .replace(/\b\d+\s*(proof|wood)\b/gi, ' ');
+  const m = masked.match(/\b(\d{1,2})\s*(?:yr|yrs|year|years|yo)\b/i);
+  if (!m) return null;
+  const v = parseInt(m[1], 10);
+  return v >= 2 && v <= 50 ? v : null;
+};
+eq('a batch number is not read as an age', nameAge("Booker's 2020-02 Boston Batch"), null);
+eq('a batch number does not swallow the age that follows it',
+  nameAge("Booker's 2024-02 The Beam House Batch 7 Year Old"), 7);
+eq('a chapter number is not an age',
+  nameAge('Little Book Chapter 8 Path Not Taken'), null);
+eq('every age stated in a name is stored', Object.values(data.catalog)
+  .filter(p => nameAge(p.name) !== null && p.age !== nameAge(p.name))
+  .map(p => p.name), []);
+
 // A secondary far below its own MSRP is a data error, not a market price.
 eq('no secondary sits far below its MSRP', Object.values(data.catalog)
   .filter(p => p.sec && p.msrp && p.sec < p.msrp * 0.25).map(p => p.name), []);
