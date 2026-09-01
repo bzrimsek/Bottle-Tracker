@@ -57,17 +57,84 @@ function doPost(e) {
   } catch (err) {
     return json({ error: 'bad request body' });
   }
-  if (body.mode !== 'flight') return json({ error: 'unknown mode' });
   try {
-    return json(designFlight(body));
+    if (body.mode === 'flight') return json(designFlight(body));
+    if (body.mode === 'candidates') return json(suggestBottles(body));
   } catch (err) {
     return json({ error: String(err) });
   }
+  return json({ error: 'unknown mode' });
+}
+
+/**
+ * Name actual bottles that would fill a described gap.
+ *
+ * "A finished Buffalo Trace" and "A Campbeltown Scotch" are descriptions,
+ * not things you can search a shop for. This turns one into a handful of
+ * real bottles with prices.
+ *
+ * It is told what BZ already owns in that corner, so it does not suggest
+ * something already on the shelf, and it is told to stay near a budget
+ * because the useless answer to every gap is an expensive famous bottle.
+ */
+function suggestBottles(req) {
+  var shape = '{"bottles":[{"name":string,"distillery":string,"proof":number,'
+    + '"price_usd":number,"why":string}],"note":string}';
+
+  var system = [
+    'You name real, currently purchasable whisky bottles that satisfy a',
+    'described gap in somebody\'s collection.',
+    'Return ONLY a JSON object matching: ' + shape,
+    'No prose, no markdown fences.',
+    '',
+    'RULES:',
+    '1. Three to five bottles, real ones that a US retailer stocks.',
+    '2. NEVER suggest anything in the ALREADY OWNED list.',
+    '3. Prefer bottles under the stated budget. An expensive famous bottle',
+    '   is the useless answer to every question; a good cheap one that',
+    '   actually fills the gap is the useful one.',
+    '4. why is one line saying what THIS bottle brings to that gap,',
+    '   specifically, not a general description of the whisky.',
+    '5. price_usd is typical US retail. Use null if you do not know it',
+    '   rather than guessing.',
+    '6. note is one line if there is something worth saying about the gap',
+    '   itself, otherwise an empty string.'
+  ].join('\n');
+
+  var owned = (req.owned || []).slice(0, 60).join('; ');
+  var user = [
+    'THE GAP: ' + (req.gap || ''),
+    req.why ? 'WHY IT MATTERS: ' + req.why : '',
+    req.budget ? 'BUDGET: about $' + req.budget : 'BUDGET: under $80',
+    '',
+    'ALREADY OWNED in this corner of the shelf, do not suggest these:',
+    owned || '(nothing)'
+  ].filter(String).join('\n');
+
+  var res = UrlFetchApp.fetch(API, {
+    method: 'post', contentType: 'application/json',
+    headers: apiHeaders_(), muteHttpExceptions: true,
+    payload: JSON.stringify({
+      model: MODEL, max_tokens: 2000, system: system,
+      messages: [{ role: 'user', content: user }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }]
+    })
+  });
+  if (res.getResponseCode() !== 200) {
+    throw new Error('API ' + res.getResponseCode() + ': '
+      + res.getContentText().slice(0, 200));
+  }
+  var data = JSON.parse(res.getContentText());
+  var text = (data.content || [])
+    .filter(function (b) { return b.type === 'text'; })
+    .map(function (b) { return b.text; })
+    .join('\n').replace(/```json|```/g, '').trim();
+  var a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a < 0) throw new Error('no JSON in the reply: ' + text.slice(0, 160));
+  return JSON.parse(text.slice(a, b + 1));
 }
 
 function designFlight(req) {
-  var key = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_KEY');
-  if (!key) throw new Error('ANTHROPIC_KEY is not set in Script Properties');
 
   var shelf = (req.shelf || []).map(function (b) {
     return [b.n, b.pf + 'pf', b.t, b.f || '', b.r || '',
@@ -108,7 +175,7 @@ function designFlight(req) {
   var res = UrlFetchApp.fetch(API, {
     method: 'post',
     contentType: 'application/json',
-    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    headers: apiHeaders_(),
     payload: JSON.stringify({
       model: FLIGHT_MODEL,
       max_tokens: 2000,
@@ -151,9 +218,26 @@ function json(obj) {
  * Ask for one bottle. notesOnly narrows the answer to the four sensory
  * columns, which is what the batch run needs.
  */
-function askAbout(name, notesOnly) {
-  var key = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_KEY');
+/**
+ * Headers for the Anthropic API.
+ *
+ * An identity-linked key — the "Workspace (legacy)" type — will not
+ * authenticate without also naming the workspace it acts in, and fails with
+ * a 400 saying anthropic-workspace-id is required. Set
+ * ANTHROPIC_WORKSPACE_ID in Script Properties alongside the key; it is
+ * ignored when absent, so a plain key still works untouched.
+ */
+function apiHeaders_() {
+  var props = PropertiesService.getScriptProperties();
+  var key = props.getProperty('ANTHROPIC_KEY');
   if (!key) throw new Error('ANTHROPIC_KEY is not set in Script Properties');
+  var h = { 'x-api-key': key, 'anthropic-version': '2023-06-01' };
+  var ws = props.getProperty('ANTHROPIC_WORKSPACE_ID');
+  if (ws) h['anthropic-workspace-id'] = ws.trim();
+  return h;
+}
+
+function askAbout(name, notesOnly) {
 
   var shape = notesOnly
     ? '{"name":string,"colour":string|null,"nose":string|null,' +
@@ -195,7 +279,7 @@ function askAbout(name, notesOnly) {
   var res = UrlFetchApp.fetch(API, {
     method: 'post',
     contentType: 'application/json',
-    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    headers: apiHeaders_(),
     payload: JSON.stringify(body),
     muteHttpExceptions: true
   });
@@ -235,8 +319,10 @@ function askAbout(name, notesOnly) {
  */
 function probeLookup() {
   var name = 'Springbank 15';
-  Logger.log('key present: %s',
-    !!PropertiesService.getScriptProperties().getProperty('ANTHROPIC_KEY'));
+  var props = PropertiesService.getScriptProperties();
+  Logger.log('key present: %s', !!props.getProperty('ANTHROPIC_KEY'));
+  Logger.log('workspace id set: %s  (needed for an identity-linked key)',
+    !!props.getProperty('ANTHROPIC_WORKSPACE_ID'));
   try {
     var out = askAbout(name, false);
     Logger.log('PARSED OK: %s', JSON.stringify(out));

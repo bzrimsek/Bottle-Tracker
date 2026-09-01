@@ -1034,6 +1034,60 @@ eq('never run means run one',
   L.recastFlight(flight, rCat, rBot, []).run, 1);
 }
 
+{
+sec('named gaps against described ones');
+// Longrow 18 is a bottle you can search a shop for. "A finished Buffalo
+// Trace" is not, and treating it as a search term found nothing.
+eq('a flight gap names a bottle', L.gapIsNamed({ kind: 'flight', name: 'Longrow 18' }), true);
+eq('a wishlist gap names a bottle', L.gapIsNamed({ kind: 'wish', name: 'X' }), true);
+eq('an extension only describes one', L.gapIsNamed({ kind: 'extend' }), false);
+eq('a region only describes one', L.gapIsNamed({ kind: 'region' }), false);
+eq('a contrast only describes one', L.gapIsNamed({ kind: 'contrast' }), false);
+
+sec('what is already owned in that corner');
+const cCat = {
+  a: { k: 'a', name: 'Buffalo Trace', dist: 'Buffalo Trace', sub: 'bourbon' },
+  b: { k: 'b', name: 'Weller 12', dist: 'Buffalo Trace', sub: 'bourbon' },
+  c: { k: 'c', name: 'Lagavulin 16', dist: 'Lagavulin', sub: 'scotch',
+       region: 'Islay' }
+};
+const ownedBT = L.gapOwned({ name: 'A finished Buffalo Trace' }, cCat);
+eq('it finds the house already owned', ownedBT.indexOf('Buffalo Trace') >= 0, true);
+eq('and everything else from that house', ownedBT.indexOf('Weller 12') >= 0, true);
+eq('but not an unrelated bottle', ownedBT.indexOf('Lagavulin 16'), -1);
+// Short words are ignored, or "A Campbeltown Scotch" would match on "a".
+eq('a region gap finds its own region',
+  L.gapOwned({ name: 'An Islay Scotch' }, cCat).indexOf('Lagavulin 16') >= 0, true);
+
+sec('candidates coming back');
+const raw = { bottles: [
+  { name: 'Buffalo Trace Kentucky Straight Bourbon', price_usd: 30 },
+  { name: 'Elijah Craig Toasted Barrel', distillery: 'Heaven Hill',
+    proof: 94, price_usd: 55, why: 'a finished bourbon at a fair price' },
+  { name: 'Something Cheap', price_usd: 25, proof: 90 },
+  { name: '', price_usd: 40 },
+  { name: 'Bad Proof', proof: 900, price_usd: 45 }
+], note: 'a note' };
+const parsed = L.parseCandidates(raw, cCat);
+// Buffalo Trace is already on the shelf; suggesting it back is the one
+// mistake that makes the whole feature look broken.
+eq('anything already owned is dropped',
+  parsed.bottles.some(b => /^Buffalo Trace Kentucky/.test(b.name)), false);
+eq('a nameless entry is dropped', parsed.bottles.length, 3);
+eq('cheapest first', parsed.bottles.map(b => b.price), [25, 45, 55]);
+eq('an impossible proof is discarded, the bottle kept',
+  parsed.bottles.find(b => b.name === 'Bad Proof').proof, null);
+eq('the reason survives',
+  parsed.bottles.find(b => /Elijah/.test(b.name)).why,
+  'a finished bourbon at a fair price');
+eq('the note survives', parsed.note, 'a note');
+eq('junk in gives nothing back', L.parseCandidates(null, cCat), null);
+eq('an empty list gives nothing back',
+  L.parseCandidates({ bottles: [] }, cCat), null);
+eq('a list of things already owned gives nothing back',
+  L.parseCandidates({ bottles: [{ name: 'Weller 12', price_usd: 40 }] }, cCat), null);
+}
+
 /* ---------------- overuse ---------------- */
 sec('overuse control');
 const flights = [
