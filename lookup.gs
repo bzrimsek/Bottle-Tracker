@@ -90,6 +90,9 @@ function suggestBottles(req) {
     'RULES:',
     '1. Three to five bottles, real ones that a US retailer stocks.',
     '2. NEVER suggest anything in the ALREADY OWNED list.',
+    '2b. An empty bottles array is a valid and useful answer. A substitute',
+    '    from another distillery is not — it will be rejected before it is',
+    '    shown, so it wastes the answer.',
     '3. Prefer bottles under the stated budget. An expensive famous bottle',
     '   is the useless answer to every question; a good cheap one that',
     '   actually fills the gap is the useful one.',
@@ -102,10 +105,25 @@ function suggestBottles(req) {
   ].join('\n');
 
   var owned = (req.owned || []).slice(0, 60).join('; ');
+  // The hard constraint, stated separately from the prose. A distillery and
+  // its flagship bottle share a name, and asked in prose for "a finished
+  // Buffalo Trace" the answer came back as an Old Forester, a 1792 and a
+  // Russell's — three substitutes from three other houses.
+  var must = [];
+  if (req.dist) {
+    must.push('The bottle MUST be made by ' + req.dist + '. Not a similar '
+      + 'house, not a sister distillery, not something with a comparable '
+      + 'profile. If ' + req.dist + ' does not make one, say so in note and '
+      + 'return an empty bottles array rather than substituting.');
+  }
+  if (req.region) must.push('It MUST be from ' + req.region + '.');
+  if (req.sub) must.push('It MUST be ' + req.sub + '.');
+
   var user = [
     'THE GAP: ' + (req.gap || ''),
     req.why ? 'WHY IT MATTERS: ' + req.why : '',
-    req.budget ? 'BUDGET: about $' + req.budget : 'BUDGET: under $80',
+    must.length ? '\nHARD CONSTRAINTS:\n' + must.join('\n') : '',
+    req.budget ? '\nBUDGET: at or under $' + req.budget : '\nBUDGET: under $80',
     '',
     'ALREADY OWNED in this corner of the shelf, do not suggest these:',
     owned || '(nothing)'

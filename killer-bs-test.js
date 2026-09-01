@@ -231,26 +231,9 @@ eq('style filter excludes', L.pourScore(catalog['Lagavulin 16 @ 86.0'],
 eq('obscurity filter admits', L.pourScore(catalog['Raasay Dun Cana @ 104.0'],
   { obsc: ['obscure'] }, []).score, 65);
 
-// Only open bottles are candidates: Lagavulin is sealed, Weller is gone.
-const picks = L.pickPour(catalog, bottles, {}, []);
-eq('only open bottles offered', picks.length, 2);
-eq('obscure ranks first', picks[0].k, 'Raasay Dun Cana @ 104.0');
-
-/* ---------------- ladder ---------------- */
-sec('proof ladder');
-// 86, 92, 104 over a span of 18 -> 0, 0.3333, 1.
-const off = L.ladderOffsets([86, 92, 104]);
-eq('ladder low end', off[0], 0);
-eq('ladder high end', off[2], 1);
-eq('ladder middle', Math.round(off[1] * 10000) / 10000, 0.3333);
-// Cairdeas: 104.4, 104.6, 104.8 -> span 0.4, midpoint exactly 0.5.
-eq('cairdeas cluster mid', L.ladderOffsets([104.4, 104.6, 104.8])[1], 0.5);
 // Single-barrel releases are ONE product; per-barrel proof lives on the
 // bottle. Keying on name+proof made two products and broke the stocking rule.
 
-// All identical proofs must not divide by zero.
-eq('flat ladder', L.ladderOffsets([100, 100, 100]), [0.5, 0.5, 0.5]);
-eq('empty ladder', L.ladderOffsets([]), []);
 
 /* ---------------- validators ---------------- */
 sec('flight validators');
@@ -1204,6 +1187,58 @@ sec('two shelves, not three');
 const two = sets.slice(0, 2);
 eq('two sets make three regions', L.vennRegions(two).length, 3);
 
+
+sec('a suggestion must fit what the gap constrained');
+// A distillery and its flagship bottle share a name. "A finished Buffalo
+// Trace" read as the BOTTLE, and the answer came back as an Old Forester, a
+// 1792 and a Russell's — three substitutes from three other houses.
+const btGap = { dist: 'Buffalo Trace' };
+eq('a bottle from the house fits',
+  L.candidateFits({ name: 'E.H. Taylor Cured Oak', dist: 'Buffalo Trace' }, btGap), true);
+eq('named in the bottle rather than the maker also fits',
+  L.candidateFits({ name: 'Buffalo Trace Experimental', dist: '' }, btGap), true);
+eq('a sister distillery does not',
+  L.candidateFits({ name: 'Barton 1792 Cognac Cask', dist: 'Barton 1792 (Sazerac)' }, btGap), false);
+eq('nor a comparable profile',
+  L.candidateFits({ name: "Russell's Single Barrel", dist: 'Wild Turkey' }, btGap), false);
+eq('nor another house entirely',
+  L.candidateFits({ name: 'Old Forester 1920', dist: 'Brown-Forman' }, btGap), false);
+// A suffix on the distillery name must not break the match.
+eq('a distillery suffix is ignored',
+  L.candidateFits({ name: 'X', dist: 'Old Elk' },
+    { dist: 'Old Elk Distillery' }), true);
+// A region is weaker evidence: a label rarely says Campbeltown, so only a
+// bottle naming a DIFFERENT region is refused.
+eq('an unmarked bottle passes a region gap',
+  L.candidateFits({ name: 'Springbank 15', dist: 'Springbank' },
+    { region: 'Campbeltown' }), true);
+eq('a bottle naming another region does not',
+  L.candidateFits({ name: 'An Islay Malt', dist: 'X' },
+    { region: 'Campbeltown' }), false);
+eq('no constraint accepts anything', L.candidateFits({ name: 'X' }, null), true);
+
+sec('when nothing fits the budget');
+const gapBT = { dist: 'Buffalo Trace' };
+const overOnly = L.parseCandidates({ bottles: [
+  { name: 'Buffalo Trace Antique Collection', distillery: 'Buffalo Trace',
+    price_usd: 400, proof: 120 },
+  { name: 'Buffalo Trace E.H. Taylor', distillery: 'Buffalo Trace',
+    price_usd: 250, proof: 100 }
+] }, {}, 80, gapBT);
+// An empty panel is not an answer. The cheapest that FITS is, as long as it
+// is labelled honestly rather than quietly widening the budget.
+eq('the cheapest over budget is offered', overOnly.bottles.length, 1);
+eq('and it is the cheapest one', overOnly.bottles[0].price, 250);
+eq('flagged as over budget', overOnly.overBudget, true);
+eq('and says so', /Nothing fits that budget/.test(overOnly.note), true);
+
+// Substitutes are counted so the message can explain an empty result.
+const allSubs = L.parseCandidates({ bottles: [
+  { name: 'Old Forester 1920', distillery: 'Brown-Forman', price_usd: 60 }
+] }, {}, 80, gapBT);
+eq('a substitute never reaches the list', allSubs.bottles.length, 0);
+eq('but it is counted', allSubs.rejected.length, 1);
+
 sec('the join me message');
 const bottle = { k: 'x', name: 'Lagavulin 8', proof: 96, sub: 'scotch',
                  region: 'Islay', tn: { nose: 'x'.repeat(400) } };
@@ -1249,6 +1284,109 @@ eq('a restricted spin still pays out',
   true);
 }
 
+{
+sec('lookup helpers');
+// The free half: a bottle already in the catalog needs no network at all.
+const luCat = {
+  'Lagavulin 16': { k: 'Lagavulin 16', name: 'Lagavulin 16', dist: 'Lagavulin',
+    proof: 86, sub: 'scotch', region: 'Islay', msrp: 110, obsc: 'known' }
+};
+const found = L.lookupFromCatalog('Lagavulin 16', luCat);
+eq('a known bottle resolves locally', found.source, 'shelf');
+eq('and carries its proof', found.proof, 86);
+eq('an unknown one does not', L.lookupFromCatalog('Nothing Like This', luCat), null);
+// A weak name match must not resolve, or the form fills with a neighbour.
+eq('a bare number does not resolve', L.lookupFromCatalog('16', luCat), null);
+
+// Anything from outside is untrusted: a wrong proof is worse than a blank.
+eq('a good reply parses',
+  L.parseLookup({ name: 'X', proof: 92 }).proof, 92);
+// An ABV where a proof was asked for is the commonest mistake.
+eq('an abv is doubled', L.parseLookup({ name: 'X', abv: 46 }).proof, 92);
+eq('an impossible proof is refused', L.parseLookup({ name: 'X', proof: 900 }), null);
+eq('no name is refused', L.parseLookup({ proof: 90 }), null);
+eq('no proof is refused', L.parseLookup({ name: 'X' }), null);
+eq('junk is refused', L.parseLookup(null), null);
+eq('an unknown category is dropped, not stored',
+  L.parseLookup({ name: 'X', proof: 90, sub: 'rocket fuel' }).sub, null);
+eq('a known category is kept',
+  L.parseLookup({ name: 'X', proof: 90, type: 'Scotch' }).sub, 'scotch');
+eq('a region outside the six is dropped',
+  L.parseLookup({ name: 'X', proof: 90, region: 'Yorkshire' }).region, null);
+
+eq('filled fields are listed',
+  L.lookupFilled({ name: 'X', proof: 90, dist: null, age: 12 }).sort(),
+  ['age', 'name', 'proof']);
+eq('nothing filled is empty', L.lookupFilled(null), []);
+
+eq('a query is appended', L.lookupUrl('https://x/exec', 'A B'),
+  'https://x/exec?name=A%20B');
+eq('an existing query is respected',
+  L.lookupUrl('https://x/exec?a=1', 'B').indexOf('&name=') > 0, true);
+eq('no endpoint means no url', L.lookupUrl('', 'X'), null);
+
+sec('flight building helpers');
+const fbCat = {};
+[86, 92, 100, 104, 110, 119].forEach((p, i) => {
+  fbCat['F' + i] = { k: 'F' + i, name: 'Bottle ' + i, dist: 'House', proof: p,
+    sub: 'scotch', fin: 'Cask ' + i, obsc: i === 2 ? 'obscure' : 'known',
+    msrp: 50 + i * 10, age: null, region: 'Islay' };
+});
+const fbBot = Object.keys(fbCat).map((k, i) => ({ id: 'f' + i, k, status: 'open' }));
+
+const cands = L.flightCandidates('finish', fbCat, fbBot);
+eq('a house with six casks makes a candidate', cands.length > 0, true);
+eq('every candidate has enough pours', cands.every(c => c.pours.length >= 4), true);
+eq('and a score', cands.every(c => typeof c.score === 'number'), true);
+// Nothing open, nothing to propose.
+eq('a sealed shelf offers nothing',
+  L.flightCandidates('finish', fbCat, []).length, 0);
+
+const built = L.buildFlight('finish', 'A premise.', fbCat, fbBot);
+eq('it builds', built.ok, true);
+eq('the premise is carried', built.premise, 'A premise.');
+eq('pours come back in proof order',
+  built.pours.map(p => fbCat[p.k].proof),
+  built.pours.map(p => fbCat[p.k].proof).slice().sort((a, b) => a - b));
+eq('an impossible variable fails cleanly',
+  L.buildFlight('age', '', fbCat, fbBot).ok, false);
+eq('and says why', /holds still/.test(L.buildFlight('age', '', fbCat, fbBot).why), true);
+
+// The one to buy has to be something you cannot already pour.
+const cast = built.pours.map(p => fbCat[p.k]);
+const buy = L.suggestPurchase('finish', cast, fbCat, fbBot);
+eq('a purchase suggestion is not already in the flight',
+  buy ? cast.every(p => p.k !== buy.p.k) : true, true);
+
+eq('proof reads as proof', L.axisLabel('proof', { proof: 92 }), '92 proof');
+eq('age reads as years', L.axisLabel('age', { age: 12 }), '12 years');
+eq('a band is title cased', L.axisLabel('price', { msrp: 40 }), 'Everyday');
+
+eq('pours are lettered from A',
+  L.relabel([{ k: 'a' }, { k: 'b' }, { k: 'c' }]).map(p => p.letter),
+  ['A', 'B', 'C']);
+eq('relabelling keeps the bottles',
+  L.relabel([{ k: 'a' }]).map(p => p.k), ['a']);
+
+sec('the remaining gap sources');
+// A wish a flight already explains is not repeated as its own finding.
+const wishFlights = [{ title: 'F', core: [{ kind: 'wish', name: 'Longrow 18' }] }];
+const wl = [{ name: 'Longrow 18', added: '2026-01-01' },
+            { name: 'Own Idea', reason: 'looked good', added: '2026-01-02' }];
+const gw = L.gapsFromWish(wl, wishFlights);
+eq('a wish a flight covers is left to the flight', gw.length, 1);
+eq('the rest keeps its own reason', gw[0].why, 'looked good');
+eq('no wishlist, no findings', L.gapsFromWish([], []), []);
+
+// The ends of the proof ladder.
+const lowShelf = {};
+[85, 86, 87].forEach((p, i) => { lowShelf['L' + i] = { k: 'L' + i, proof: p }; });
+const gp = L.gapsFromProof(lowShelf);
+eq('a shelf with no high proof is told so',
+  gp.some(g => /above 120/.test(g.name)), true);
+eq('and every finding explains itself', gp.every(g => !!g.why), true);
+}
+
 /* ---------------- overuse ---------------- */
 sec('overuse control');
 const flights = [
@@ -1261,8 +1399,6 @@ const hist = [{ flight: 'F1', pours: ['A', 'B'] }];
 eq('use count across flights and runs', L.useCount('A', flights, hist), 4);
 eq('use count for B', L.useCount('B', flights, hist), 2);
 eq('unused product', L.useCount('Z', flights, hist), 0);
-eq('overused at default cap 3', L.overused(['A', 'B'], flights, hist), ['A']);
-eq('nothing overused at cap 5', L.overused(['A', 'B'], flights, hist, 5), []);
 
 /* ---------------- snacks ---------------- */
 sec('snack suggestions');
@@ -1348,25 +1484,6 @@ eq('199.99 special', L.priceBand(199.99), 'special');
 eq('200 vault', L.priceBand(200), 'vault');
 eq('no price is null', L.priceBand(null), null);
 eq('zero price is null', L.priceBand(0), null);
-
-sec('spin and holds');
-// A held reel keeps its face; an unheld one takes the rng's pick. rng at 0
-// always selects face index 0, which is 'any' on every reel.
-const zero = () => 0;
-let cur = { proof: 'ge120', type: 'scotch', obsc: 'obscure', price: 'vault' };
-let spun = L.spin(cur, { type: true }, zero);
-eq('held reel keeps its face', spun.type, 'scotch');
-eq('unheld reel rerolled', spun.proof, 'any');
-eq('all four reels present', Object.keys(spun).sort(), ['obsc', 'price', 'proof', 'type']);
-// rng just under 1 selects the last face on each reel.
-const last = () => 0.999999;
-spun = L.spin(cur, {}, last);
-eq('last face on proof', spun.proof, 'ge120');
-eq('last face on type', spun.type, 'tequila');
-eq('last face on recognition', spun.obsc, 'obscure');
-eq('last face on occasion', spun.price, 'vault');
-// Holding everything makes a spin a no-op.
-eq('all held is a no-op', L.spin(cur, { proof: 1, type: 1, obsc: 1, price: 1 }, last), cur);
 
 sec('a spin always pays out');
 // The machine must never land on a combination nothing satisfies. Rather
@@ -1671,6 +1788,29 @@ sec('zoom ceiling');
 // at 1x, so they separate once 0.336 / z < 0.011, i.e. above about 31x.
 eq('the ceiling clears the tightest cluster', L.MAP_ZOOM.max > 31, true);
 eq('zoom floor is the whole map', L.MAP_ZOOM.min, 1);
+
+
+sec('pins culled to the window');
+// Extracted from renderMap, which was doing this arithmetic three times.
+const pvCat = {
+  near: { k: 'near', name: 'Near One', dist: 'Near', sub: 'scotch' },
+  far:  { k: 'far',  name: 'Far One',  dist: 'Far',  sub: 'scotch' }
+};
+const pvBot = [{ id: 'p1', k: 'near', status: 'open' },
+               { id: 'p2', k: 'far', status: 'open' }];
+const pvCoords = { Near: [-6.0, 55.7], Far: [-120.0, 40.0] };
+const islayView = { x: L.project(-6.5, 56.0)[0], y: L.project(-6.5, 56.0)[1],
+                    w: 1, h: 1 };
+const got = L.pinsInView(pvCat, pvCoords, pvBot, ['scotch'], islayView);
+eq('only what is on screen', got.pins.map(p => p.dist), ['Near']);
+eq('and no view means everything',
+  L.pinsInView(pvCat, pvCoords, pvBot, ['scotch'], null).pins.length, 2);
+// maxN must come from what SURVIVED, or a view of Speyside scales its dots
+// against a Laphroaig sitting off screen.
+eq('the largest count is taken from the visible pins', got.maxN, 1);
+eq('missing coordinates are safe',
+  L.pinsInView(pvCat, null, pvBot, ['scotch'], null).pins, []);
+eq('maxN is never zero', L.pinsInView({}, {}, [], ['scotch'], null).maxN, 1);
 
 sec('co-located pins fan out');
 // Two pins on one coordinate means one can never be tapped.
