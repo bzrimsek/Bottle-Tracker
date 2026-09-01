@@ -5,12 +5,23 @@ chk(){ if [ "$2" = "0" ]; then echo "  PASS $1"; else echo "  FAIL $1"; fail=1; 
 
 V=$(grep -o "const APP_VERSION = '[0-9.]*'" index.html | grep -o "[0-9]\+\.[0-9]\+\.[0-9]\+")
 echo "version $V"
-grep -q "dram-v$V'" sw.js; chk "sw.js CACHE_NAME matches APP_VERSION" $?
-grep -q "Bottle Tracker v$V" index.html; chk "file header matches" $?
+grep -q "killer-bs-v$V'" sw.js; chk "sw.js CACHE_NAME matches APP_VERSION" $?
+grep -q "Version : v$V  Build " index.html; chk "header version line matches" $?
+grep -q "^// v$V  " index.html; chk "changelog has an entry for $V" $?
+grep -qE "^// v[0-9.]+  [0-9-]{10}  .{10}" index.html; chk "changelog entries are non-empty" $?
 grep -q ">v$V<" index.html; chk "UI version string matches" $?
 grep -q "\[describe changes here\]" index.html; [ $? -ne 0 ]; chk "no changelog placeholder" $?
 grep -q "localStorage" index.html; chk "storage present" $?
 node -e "JSON.parse(require('fs').readFileSync('data.json','utf8'))" 2>/dev/null; chk "data.json parses" $?
+node -e "JSON.parse(require('fs').readFileSync('map.json','utf8'))" 2>/dev/null; chk "map.json parses" $?
+grep -q "map.json" sw.js; chk "map.json precached in sw.js" $?
+node --check sw.js 2>/dev/null; chk "sw.js parses" $?
+grep -q "SKIP_WAITING" sw.js; chk "sw.js honours SKIP_WAITING" $?
+grep -q "SKIP_WAITING" index.html; chk "page requests SKIP_WAITING" $?
+grep -q "controllerchange" index.html; chk "page reloads on controllerchange" $?
+grep -q "beforeinstallprompt" index.html; chk "install prompt captured" $?
+grep -q '"maskable"' manifest.json; chk "manifest has a maskable icon" $?
+grep -q "CAN_STORE" index.html; chk "storage availability probed" $?
 node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8'))" 2>/dev/null; chk "manifest.json parses" $?
 node killer-bs-test.js >/dev/null 2>&1; chk "test harness green" $?
 sed -n "/^'use strict';/,/^<\/script>/p" index.html | sed '$d' > /tmp/dram-inline.js
