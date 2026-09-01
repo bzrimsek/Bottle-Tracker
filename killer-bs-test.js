@@ -1530,6 +1530,9 @@ eq('search results are labelled with their group',
 /* ---------------- real data ---------------- */
 sec('real collection data');
 const data = JSON.parse(fs.readFileSync(path.join(__dirname, 'data.json'), 'utf8'));
+// The map geometry was never loaded here, which is why the map assertions
+// could be dropped without anything failing.
+const mapData = JSON.parse(fs.readFileSync(path.join(__dirname, 'map.json'), 'utf8'));
 eq('344 bottles', data.bottles.length, 344);
 eq('325 products', Object.keys(data.catalog).length, 325);
 // Macaloney's is in Victoria BC and Crown Royal in Gimli, Manitoba: both were
@@ -1623,6 +1626,72 @@ L.REELS.forEach(r => r.faces.forEach(f => {
   if (f.t && /^[a-z]/.test(f.t)) badFace.push(r.id + ':' + f.t);
 }));
 eq('every reel face is Title Case', badFace, []);
+// --- the map, against the real shelf -------------------------------------
+// These were lost when the per-layer ceiling tests were removed; without
+// them a distillery can go missing from the map and nothing complains.
+const usPins = L.mapPins(data.catalog, mapData.usDistilleries, data.bottles, L.US_SUBS);
+const scPins = L.mapPins(data.catalog, mapData.distilleries, data.bottles, ['scotch']);
+const iePins = L.mapPins(data.catalog, mapData.ieDistilleries, data.bottles, ['irish']);
+eq('56 US distilleries plotted', usPins.length, 56);
+eq('185 US bottles sit on a pin', usPins.reduce((n, p) => n + p.total, 0), 185);
+eq('47 irish bottles sit on a pin', iePins.reduce((n, p) => n + p.total, 0), 47);
+// 76 of 80: the other four are blends and independent bottlings whose
+// "distillery" is a blender with no single place -- Dewar's, Johnnie Walker,
+// Orphan Barrel and Ian Macleod. A blend has no dot on a map, and inventing
+// one would be worse than leaving it off.
+eq('76 of 80 scotch bottles sit on a pin',
+  scPins.reduce((n, p) => n + p.total, 0), 76);
+
+// Nothing may appear in a count and be absent from the map.
+const unplaced = (subs, coords) => [...new Set(Object.values(data.catalog)
+  .filter(p => subs.indexOf(p.sub) >= 0).map(p => p.dist))]
+  .filter(dd => !coords[dd]);
+eq('no US distillery is unplaced', unplaced(L.US_SUBS, mapData.usDistilleries), []);
+eq('no irish distillery is unplaced', unplaced(['irish'], mapData.ieDistilleries), []);
+// Only real distilleries are expected to have coordinates.
+const BLENDERS = ["Dewar's", 'Johnnie Walker',
+                  'Orphan Barrel Whiskey Distilling Co.', 'Ian Macleod Distillers'];
+eq('every scotch DISTILLERY is placed',
+  unplaced(['scotch'], mapData.distilleries).filter(d => BLENDERS.indexOf(d) < 0), []);
+eq('the four unplaced scotch names are all blenders',
+  unplaced(['scotch'], mapData.distilleries).sort(), BLENDERS.slice().sort());
+
+// 308 of 325: the remainder are Canadian, Japanese, world and tequila, which
+// have no coordinate set of their own.
+eq('308 bottles are placeable',
+  usPins.concat(scPins, iePins).reduce((n, p) => n + p.total, 0), 308);
+
+// Pins must come apart at the ceiling, or a cluster can never be read.
+const worldSpan = L.mapExtent(mapData.world, 3).w;
+function overlapCount(pins, z) {
+  const maxN = pins.reduce((m, p) => Math.max(m, p.total), 1);
+  let n = 0;
+  for (let i = 0; i < pins.length; i++) {
+    for (let j = i + 1; j < pins.length; j++) {
+      const A = L.project(pins[i].lon, pins[i].lat);
+      const B = L.project(pins[j].lon, pins[j].lat);
+      const gap = Math.hypot(A[0] - B[0], A[1] - B[1]);
+      const rr = (L.pinRadius(pins[i].total, worldSpan, maxN)
+                + L.pinRadius(pins[j].total, worldSpan, maxN)) / z;
+      if (gap < rr) n++;
+    }
+  }
+  return n;
+}
+eq('no US pins overlap at the ceiling', overlapCount(usPins, L.MAP_ZOOM.max), 0);
+eq('no scotch pins overlap at the ceiling', overlapCount(scPins, L.MAP_ZOOM.max), 0);
+eq('pins do overlap when zoomed out', overlapCount(usPins, 1) > 0, true);
+
+// Prices corrected from Ohio state retail, which is what BZ actually pays.
+eq('Green Spot Montelena is Zinfandel, not Bordeaux',
+  data.catalog['Green Spot Montelena'].fin, 'Zinfandel');
+eq('and priced at Ohio retail', data.catalog['Green Spot Montelena'].msrp, 99.99);
+eq('Basil Hayden is a forty dollar bourbon',
+  data.catalog['Basil Hayden Bourbon'].msrp, 39.99);
+// A secondary far below its own MSRP is a data error, not a market price.
+eq('no secondary sits far below its MSRP', Object.values(data.catalog)
+  .filter(p => p.sec && p.msrp && p.sec < p.msrp * 0.25).map(p => p.name), []);
+
 // Every real flight title survives sentence-casing without losing a capital
 // that a proper noun needs.
 eq('no flight title starts lower-case',

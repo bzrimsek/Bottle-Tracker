@@ -5,12 +5,61 @@ Runs the pre-delivery audit AND the test harness. Refuses to ship unless BOTH
 pass. This is the single gate: run `python3 ship.py` before every push.
 Nothing ships red.
 
-Usage: python3 ship.py [path/to/index.html]     (default: index.html beside this script)
+Usage: python3 ship.py [path/to/index.html]     check, and list what to upload
+       python3 ship.py --shipped                record that you HAVE uploaded
+
 Exit 0 = safe to ship.  Exit 1 = do not ship.
+
+Checking never records. An earlier version recorded on every run, so a
+verification run before a bump marked files as shipped that had not been
+uploaded, and the next run then called them unchanged. Recording is an
+explicit act now, because only you know when the files actually went up.
 
 Expects audit.py, killer-bs-test.js, sw.js and index.html in the same folder.
 """
-import sys, os, re, subprocess
+import sys, os, re, json, hashlib, subprocess
+
+# What actually goes to the web host. The tooling (bump, audit, ship,
+# validate, lookup.gs) and the notes never do.
+DEPLOYABLE = ['index.html', 'sw.js', 'manifest.json', 'data.json', 'map.json',
+              'mark.png', 'icon-192.png', 'icon-512.png']
+STATE = '.shipstate.json'
+
+
+def digest(path):
+    with open(path, 'rb') as f:
+        return hashlib.sha256(f.read()).hexdigest()[:16]
+
+
+def changed_since_last_ship(base, ver):
+    """Which deployable files differ from the last successful ship.
+
+    Recorded rather than remembered: after a long session it is very easy to
+    re-upload eight files when two changed, or worse, to miss one."""
+    now = {}
+    for name in DEPLOYABLE:
+        p = os.path.join(base, name)
+        if os.path.exists(p):
+            now[name] = digest(p)
+    for lock in ('killer-bs-v%s.html' % ver, 'killer-bs-v%s-sw.js' % ver):
+        if os.path.exists(os.path.join(base, lock)):
+            now[lock] = 'lock'
+
+    path = os.path.join(base, STATE)
+    prev = {}
+    if os.path.exists(path):
+        try:
+            prev = json.load(open(path, encoding='utf-8')).get('files', {})
+        except Exception:
+            prev = {}
+    changed = [n for n, h in now.items()
+               if n.startswith('killer-bs-v') or prev.get(n) != h]
+    return now, changed, bool(prev)
+
+
+def record_ship(base, ver, now):
+    json.dump({'version': ver, 'files': now},
+              open(os.path.join(base, STATE), 'w'), indent=1)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -24,8 +73,8 @@ def locate(name, alt_dir):
 
 
 def main():
-    index = os.path.abspath(sys.argv[1] if len(sys.argv) > 1
-                            else os.path.join(HERE, 'index.html'))
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    index = os.path.abspath(args[0] if args else os.path.join(HERE, 'index.html'))
     base = os.path.dirname(index)
 
     if not os.path.exists(index):
@@ -85,10 +134,29 @@ def main():
     print()
     if ok:
         print(f'  \u2714 SAFE TO SHIP \u2014 v{ver}')
-        print(f'    upload: index.html, sw.js, killer-bs-v{ver}.html, killer-bs-v{ver}-sw.js')
-        print('    (+ killer-bs-test.js if tests changed this session — rule 29)')
-        print('    (+ data.json / map.json if the shelf or the map changed)')
-        print('    (+ CHANGELOG.md, BACKLOG.md when they change)\n')
+        now, changed, had_state = changed_since_last_ship(base, ver)
+        print('\n  UPLOAD THESE:')
+        for name in sorted(changed):
+            print('    ' + name)
+        if not had_state:
+            print('\n    (first recorded ship \u2014 everything above is listed;'
+                  ' later ships list only what changed)')
+        else:
+            same = sorted(set(now) - set(changed))
+            if same:
+                print('\n  unchanged, leave them alone:')
+                print('    ' + ', '.join(same))
+        tests = os.path.join(base, 'killer-bs-test.js')
+        if os.path.exists(tests):
+            print('\n    (+ killer-bs-test.js if tests changed this session'
+                  ' \u2014 rule 29)')
+        if '--shipped' in sys.argv:
+            record_ship(base, ver, now)
+            print('\n  recorded as shipped \u2014 the next run compares against this.')
+        else:
+            print('\n    run  python3 ship.py --shipped  once they are uploaded,')
+            print('    so the next run can tell you what changed.')
+        print()
         return 0
     print('  \u2716 DO NOT SHIP \u2014 fix the failure(s) above\n')
     return 1
