@@ -2,63 +2,83 @@
   "rules": {
     "bz-apps": {
       "whisky": {
-
         "directory": {
           ".read": "auth != null",
-          ".indexOn": ["key"],
+          ".indexOn": [
+            "key"
+          ],
           "$uid": {
             ".write": "auth != null && $uid === auth.uid",
             ".validate": "newData.hasChildren(['uid','name','key'])",
-            "uid":  { ".validate": "newData.val() === auth.uid" },
-            "name": { ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 24" },
-            "key":  { ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 24" },
-            "$other": { ".validate": false }
+            "uid": {
+              ".validate": "newData.val() === auth.uid"
+            },
+            "name": {
+              ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 24"
+            },
+            "key": {
+              ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 24"
+            },
+            "$other": {
+              ".validate": false
+            }
           }
         },
-
         "requests": {
           "$toUid": {
-            ".read":  "auth != null && $toUid === auth.uid",
+            ".read": "auth != null && $toUid === auth.uid",
             "$fromUid": {
               ".write": "auth != null && ($fromUid === auth.uid || $toUid === auth.uid)",
               ".validate": "newData.hasChildren(['from','name','at'])",
-              "from": { ".validate": "newData.val() === $fromUid" },
-              "name": { ".validate": "newData.isString() && newData.val().length <= 24" },
-              "at":   { ".validate": "newData.isNumber()" },
-              "$other": { ".validate": false }
+              "from": {
+                ".validate": "newData.val() === $fromUid"
+              },
+              "name": {
+                ".validate": "newData.isString() && newData.val().length <= 24"
+              },
+              "at": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
             }
           }
         },
-
         "shares": {
           "$ownerUid": {
-            ".read":  "auth != null && $ownerUid === auth.uid",
+            ".read": "auth != null && $ownerUid === auth.uid",
             "$withUid": {
               ".write": "auth != null && $ownerUid === auth.uid",
               ".validate": "newData.hasChildren(['at'])",
-              "at": { ".validate": "newData.isNumber()" },
-              "$other": { ".validate": false }
+              "at": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
             }
           }
         },
-
         "sharedWith": {
           "$viewerUid": {
             ".read": "auth != null && $viewerUid === auth.uid",
             "$ownerUid": {
               ".write": "auth != null && $ownerUid === auth.uid",
               ".validate": "newData.hasChildren(['at'])",
-              "at": { ".validate": "newData.isNumber()" },
-              "$other": { ".validate": false }
+              "at": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
             }
           }
         },
-
         "$uid": {
-          ".read":  "auth != null && ($uid === auth.uid || root.child('bz-apps/whisky/shares').child($uid).child(auth.uid).exists())",
+          ".read": "auth != null && ($uid === auth.uid || root.child('bz-apps/whisky/shares').child($uid).child(auth.uid).exists())",
           ".write": "auth != null && $uid === auth.uid"
         }
-
       }
     }
   }

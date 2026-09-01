@@ -831,6 +831,39 @@ const sealedShort = { title: 'SEALED', core: [{ k: 'a' }, { k: 's' }] };
 const sg = L.gapsFromFlights([sealedShort], gCat, gBot);
 eq('a sealed bottle you own is flagged as owned', sg[0].owned, true);
 
+
+sec('what a wish pour can say about itself');
+// A flight whose pours agree tells you about the one that is missing.
+const oneKind = { title: 'ALL SCOTCH', tag: 'ONE VARIABLE: WHICH CASK', core: [
+  { k: 'a' }, { k: 'b' }, { k: 'c' }, { kind: 'wish', name: 'Missing One', proof: 92 }] };
+const oneCat = {
+  a: { k: 'a', name: 'A', sub: 'scotch', proof: 90, dist: 'D1' },
+  b: { k: 'b', name: 'B', sub: 'scotch', proof: 94, dist: 'D2' },
+  c: { k: 'c', name: 'C', sub: 'scotch', proof: 96, dist: 'D3' }
+};
+const oneBot = ['a', 'b', 'c'].map((k, i) => ({ id: 'o' + i, k, status: 'open' }));
+const g1 = L.gapsFromFlights([oneKind], oneCat, oneBot)[0];
+eq('a uniform flight names the category', g1.sub, 'scotch');
+eq('and carries the proof the card recorded', g1.proof, 92);
+
+// A flight that mixes categories on purpose tells you nothing, and must not
+// pretend otherwise. Peat Is a Postcode runs Scotch, Canadian and Irish
+// because the flight is about peat crossing borders.
+const mixed = { title: 'ACROSS BORDERS', tag: 'ONE VARIABLE: WHERE', core: [
+  { k: 'a' }, { k: 'd' }, { k: 'e' }, { kind: 'wish', name: 'Missing Two' }] };
+const mixCat = Object.assign({}, oneCat, {
+  d: { k: 'd', name: 'D', sub: 'irish', proof: 92, dist: 'D4' },
+  e: { k: 'e', name: 'E', sub: 'canadian', proof: 93, dist: 'D5' }
+});
+const mixBot = ['a', 'd', 'e'].map((k, i) => ({ id: 'm' + i, k, status: 'open' }));
+eq('a mixed flight infers nothing',
+  L.gapsFromFlights([mixed], mixCat, mixBot)[0].sub, null);
+// Two pours is not enough to call it a pattern.
+const twoPour = { title: 'THIN', tag: 'ONE VARIABLE: X', core: [
+  { k: 'a' }, { k: 'b' }, { kind: 'wish', name: 'Missing Three' }] };
+eq('two agreeing pours are not evidence',
+  L.gapsFromFlights([twoPour], oneCat, oneBot)[0].sub, null);
+
 sec('gaps from thinness');
 const thin = L.gapsFromThinness(gCat);
 eq('a region with nothing is reported',
@@ -1217,6 +1250,64 @@ eq('a bottle naming another region does not',
     { region: 'Campbeltown' }), false);
 eq('no constraint accepts anything', L.candidateFits({ name: 'X' }, null), true);
 
+
+sec('when the house does not make one');
+const rfCat = {};
+for (let i = 0; i < 6; i++) {
+  rfCat['r' + i] = { k: 'r' + i, name: 'BT ' + i, dist: 'Buffalo Trace',
+                     sub: 'bourbon', proof: 90 + i * 2, fin: null };
+}
+// A substitute from another house was the bug. A reframe that says the
+// house does not make one, and asks the answerable question instead, is not.
+const finishGap = { kind: 'extend', dist: 'Buffalo Trace',
+                    name: 'A finished bottling from Buffalo Trace' };
+const alt = L.reframeGap(finishGap, rfCat);
+eq('it reframes', !!alt, true);
+eq('the constraint on the house is dropped', alt.dist, undefined);
+eq('but the category is kept', alt.sub, 'bourbon');
+eq('and it says why the house cannot answer',
+  /does not release a finished bottling/.test(alt.why), true);
+eq('it aims near the house\u2019s own strength', alt.near, 95);
+// Strength and age reframe the same way.
+eq('a strength gap reframes',
+  /cask-strength/i.test(L.reframeGap(
+    { dist: 'Buffalo Trace', name: 'Something from Buffalo Trace at a very different strength' },
+    rfCat).name), true);
+eq('an age gap reframes',
+  /age-stated/i.test(L.reframeGap(
+    { dist: 'Buffalo Trace', name: 'An age-stated bottling from Buffalo Trace' },
+    rfCat).name), true);
+// Nothing to reframe when there is no house in the gap.
+eq('a gap with no distillery does not reframe',
+  L.reframeGap({ name: 'A wood-only bottling' }, rfCat), null);
+eq('an unknown house does not reframe',
+  L.reframeGap({ dist: 'Nowhere', name: 'A finished bottling from Nowhere' }, rfCat), null);
+
+sec('impossible gaps stop being offered');
+const dgCat = {};
+for (let i = 0; i < 5; i++) {
+  dgCat['d' + i] = { k: 'd' + i, name: 'D' + i, dist: 'House', sub: 'bourbon',
+                     proof: 90 + i, obsc: 'known', msrp: 50 };
+}
+const dgBot = Object.keys(dgCat).map((k, i) => ({ id: 'g' + i, k, status: 'open' }));
+const before = L.shelfGaps(dgCat, dgBot, [], [], []);
+eq('the shelf offers findings', before.length > 0, true);
+const deadKey = {};
+deadKey[L.gapKey(before[0])] = 1;
+const after = L.shelfGaps(dgCat, dgBot, [], [], [], deadKey);
+eq('a gap proved impossible is not offered again',
+  after.some(g => L.gapKey(g) === L.gapKey(before[0])), false);
+// Not simply one fewer: removing a finding frees a slot in its capped kind,
+// so something ranked below takes its place. The list stays full, which is
+// what a cap is for.
+eq('the list does not shrink below the cap', after.length >= before.length - 1, true);
+eq('the dropped one is genuinely gone',
+  after.filter(g => L.gapKey(g) === L.gapKey(before[0])).length, 0);
+// Ranking must still apply after filtering — the filter used to run before
+// the sort, against an array the sort then mutated.
+eq('what is left is still ranked',
+  after.every((g, i) => i === 0 || after[i - 1].weight >= g.weight), true);
+
 sec('when nothing fits the budget');
 const gapBT = { dist: 'Buffalo Trace' };
 const overOnly = L.parseCandidates({ bottles: [
@@ -1285,6 +1376,33 @@ eq('a restricted spin still pays out',
 }
 
 {
+
+sec('the rarest word carries the match');
+// "Longrow 18 — 2021 Release" matched five bottles on the word "release",
+// which dozens share, while "longrow" appears nowhere on the shelf. The
+// rarest word is the one doing the identifying: if it is absent, the query
+// is about something the shelf does not have, however many common words
+// agree. No threshold to guess at — the shelf decides which word is rare.
+const rareCat = {};
+['Angels Envy Small Batch Limited Release', 'Ardbeg Heavy Vapours Committee Release',
+ 'Barrell Craft Spirits Private Release', 'Lagavulin 16 Year Old',
+ 'Weller 12 Year Old'].forEach((n, i) => {
+  rareCat['r' + i] = { k: 'r' + i, name: n, dist: n.split(' ')[0], proof: 90 };
+});
+eq('a bottle the shelf does not have finds nothing',
+  L.shopSearch('Longrow 18 — 2021 Release', rareCat, 5).length, 0);
+eq('even though release is all over the shelf',
+  L.shopSearch('Release', rareCat, 5).length > 0, true);
+eq('a bottle it does have is found',
+  L.shopSearch('Lagavulin 16', rareCat, 5)[0].p.name, 'Lagavulin 16 Year Old');
+eq('a real multi-word name still resolves',
+  L.shopSearch('Barrell Craft Spirits Private Release', rareCat, 5)[0].p.name,
+  'Barrell Craft Spirits Private Release');
+// A digits-only query has no word to be rarest, so it falls back to
+// scanning — useful for a person reading a list, refused for autofill.
+eq('digits alone still scan', L.shopSearch('16', rareCat, 5).length > 0, true);
+eq('but never autofill a form', L.lookupFromCatalog('16', rareCat), null);
+
 sec('lookup helpers');
 // The free half: a bottle already in the catalog needs no network at all.
 const luCat = {
@@ -1385,6 +1503,28 @@ const gp = L.gapsFromProof(lowShelf);
 eq('a shelf with no high proof is told so',
   gp.some(g => /above 120/.test(g.name)), true);
 eq('and every finding explains itself', gp.every(g => !!g.why), true);
+}
+
+{
+sec('the invite text');
+// A link with a uid in it. That is the only fact an invite carries — who
+// sent it — so there is nothing to generate, store, expire or secure.
+eq('a link is built from a uid',
+  L.buddyLink('https://x.github.io/app/?a=1#old', 'abc123XYZ'),
+  'https://x.github.io/app/#buddy=abc123XYZ');
+eq('and read back', L.buddyFromUrl('https://x/#buddy=abc123XYZ'), 'abc123XYZ');
+eq('a plain url carries nobody', L.buddyFromUrl('https://x/app/'), null);
+eq('a short id is not a uid', L.buddyFromUrl('https://x/#buddy=ab'), null);
+eq('no uid, no link', L.buddyLink('https://x/', ''), null);
+
+const txt = L.inviteText('BZ', 'https://x/#buddy=abc123XYZ');
+eq('it says who sent it', /^BZ wants/.test(txt), true);
+eq('it carries the link', txt.indexOf('https://x/#buddy=abc123XYZ') > 0, true);
+// The reader may never have heard of any of this, so the message has to
+// stand alone — and has to say what the link does NOT do.
+eq('it explains what the app is', /Bottle Tracker/.test(txt), true);
+eq('it says access is not automatic', /until you say so/.test(txt), true);
+eq('an anonymous sender still reads', /^I want/.test(L.inviteText('', 'x')), true);
 }
 
 /* ---------------- overuse ---------------- */
@@ -2142,11 +2282,14 @@ eq('every documented column is recognised',
 
 /* ---------------- reference ---------------- */
 sec('reference');
-eq('three groups', L.REF_GROUPS.length, 3);
+eq('four groups', L.REF_GROUPS.length, 4);
+// The app's own group leads, since somebody opening Info for the first time
+// is more likely to be asking what a screen does than what Oloroso means.
+eq('the app comes first', L.REF_GROUPS[0].id, 'features');
 eq('tasting group resolves', L.refGroup('tasting'), L.TASTING);
 eq('whiskey group resolves', L.refGroup('whiskey'), L.WHISKEY);
 eq('our-data group resolves', L.refGroup('ourdata'), L.REFERENCE);
-eq('an unknown group falls back to the first', L.refGroup('zzz'), L.TASTING);
+eq('an unknown group falls back to the first', L.refGroup('zzz'), L.FEATURES);
 eq('every group has content',
   L.REF_GROUPS.every(g => L[g.data].length > 0), true);
 eq('tasting and whiskey items are substantial',
@@ -2175,8 +2318,11 @@ eq('every type has a definition',
 eq('every scotch region is defined',
   L.SCOTCH_REGIONS.filter(r => defined.indexOf(r.toLowerCase()) < 0), []);
 eq('our-data term count', L.referenceCount('ourdata'), defined.length);
-eq('total spans all three groups', L.referenceCount(),
-  L.referenceCount('tasting') + L.referenceCount('whiskey') + L.referenceCount('ourdata'));
+// Summed over whatever groups exist, rather than three named ones — this
+// failed the moment a fourth was added, which is a test about arithmetic
+// breaking on a change that was not about arithmetic.
+eq('the total is every group added up', L.referenceCount(),
+  L.REF_GROUPS.reduce((n, g) => n + L.referenceCount(g.id), 0));
 
 sec('reference search');
 eq('search finds a term', L.searchReference('lincoln county')
@@ -2374,6 +2520,32 @@ eq('every note set records its origin one way or the other',
 eq('notes always come back in sheet order',
   withTn.every(p => L.tastingNotes(p).map(n => n.label.toLowerCase()).join()
     === L.TN_ORDER.filter(k => p.tn[k]).join()), true);
+
+
+sec('a finish names a wood or a wine');
+// "Longrow 18 — 2021 Release" came back with a finish of 2021, and the shelf
+// then reported "a finish you do not have: 2021" as a reason to buy it.
+eq('a sherry is a finish', L.cleanFinish('Oloroso'), 'Oloroso');
+eq('a wood is a finish', L.cleanFinish('Toasted Oak'), 'Toasted Oak');
+eq('several are a finish', L.cleanFinish('Sherry+American Oak'), 'Sherry+American Oak');
+eq('an abbreviation survives', L.cleanFinish('STR'), 'STR');
+eq('a release year is not', L.cleanFinish('2021'), null);
+eq('an older year is not either', L.cleanFinish('1998'), null);
+eq('a proof is not', L.cleanFinish('92'), null);
+eq('an age is not', L.cleanFinish('12'), null);
+eq('nothing is nothing', L.cleanFinish('  '), null);
+eq('null is safe', L.cleanFinish(null), null);
+// Both ways in are covered: what a lookup returns, and what a product stores.
+eq('a lookup finish is checked',
+  L.parseLookup({ name: 'X', proof: 92, finish: '2021' }).fin, null);
+eq('a real one still arrives',
+  L.parseLookup({ name: 'X', proof: 92, finish: 'Oloroso' }).fin, 'Oloroso');
+eq('a stored finish is checked',
+  L.normalizeProduct({ name: 'X', proof: 92, fin: '2021' }).fin, null);
+// And nothing on the real shelf is a bare number.
+eq('no bottle on the shelf has a numeric finish',
+  Object.values(data.catalog).filter(p => p.fin && !/[a-z]{3}/i.test(p.fin))
+    .map(p => p.name), []);
 
 eq('56 US distilleries plotted', usPins.length, 56);
 eq('185 US bottles sit on a pin', usPins.reduce((n, p) => n + p.total, 0), 185);
