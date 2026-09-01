@@ -179,6 +179,26 @@ def run_audit(html_path):
         else:
             ok('model proposals are verified against the shelf')
 
+    # ── 10d. The nav must not be able to cover content ────────────
+    # A fixed bar over a scrolling page overlays content at every scroll
+    # position, and bottom padding only lets you reach the last element.
+    # MadGolf's structure: body is a fixed-height flex column, the active
+    # screen scrolls inside it, the nav is the last item in the column.
+    css = html.split('</style>')[0]
+    layout = [
+        ('height:100dvh', 'body is not a fixed-height column'),
+        ('.screen.on{display:block;flex:1', 'the active screen does not scroll'),
+        ('overflow-y:auto', 'nothing scrolls inside the body'),
+    ]
+    bad = [why for needle, why in layout if needle not in css]
+    if 'position:fixed;left:0;right:0;bottom:0' in css:
+        bad.append('the nav is fixed over the page again')
+    if bad:
+        for why in bad:
+            fail('layout: ' + why)
+    else:
+        ok('nav cannot overlay content (flex column, screen scrolls)')
+
     # ── 11. Manifest ──────────────────────────────────────────────
     mf = os.path.join(base, 'manifest.json')
     if not os.path.exists(mf):
