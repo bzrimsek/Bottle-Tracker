@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""audit.py — Killer B's Bottle Tracker pre-delivery audit.
+Usage: python3 audit.py [path/to/index.html]
+Must pass with 0 failures before every delivery. No exceptions.
+
+Checks:
+   1. JS syntax (node --check) on the inline script
+   2. APP_VERSION present and valid
+   3. Header carries a headline for this version, non-blank
+   4. CHANGELOG.md carries the full entry for this version
+   5. Header holds no more than KEEP_IN_HEADER versions
+   6. BUILD_TIME present and in Eastern Time format
+   7. UI version string matches APP_VERSION
+   8. sw.js CACHE_NAME matches APP_VERSION
+   9. sw.js parses, honours SKIP_WAITING, and precaches every asset
+  10. Page requests SKIP_WAITING and reloads on controllerchange
+  11. Install prompt captured; manifest valid with a maskable icon
+  12. data.json and map.json parse and hold what the app expects
+  13. Storage availability is probed rather than assumed
+  14. Named lock files exist for this version (html and sw.js)
+"""
+import sys, re, os, json, subprocess
+
+KEEP_IN_HEADER = 10
+ASSETS = ['mark.png', 'icon-192.png', 'icon-512.png', 'data.json', 'map.json']
+
+failures = 0
+
+
+def fail(msg):
+    global failures
+    failures += 1
+    print(f'  \u2716 FAIL: {msg}')
+
+
+def ok(msg):
+    print(f'  \u2713 {msg}')
+
+
+def run_audit(html_path):
+    global failures
+    failures = 0
+    base = os.path.dirname(os.path.abspath(html_path)) or '.'
+    print(f'\nAudit: {html_path}\n')
+
+    if not os.path.exists(html_path):
+        fail(f'index.html not found at {html_path}')
+        return False
+    html = open(html_path, encoding='utf-8').read()
+
+    # ── 1. JS syntax ──────────────────────────────────────────────
+    blocks = re.findall(
+        r'<script(?![^>]*\bsrc\b)(?![^>]*type=["\']module["\'])[^>]*>([\s\S]*?)</script>', html)
+    tmp = '/tmp/audit_killerbs.js'
+    with open(tmp, 'w') as f:
+        f.write('\n'.join(blocks))
+    r = subprocess.run(['node', '--check', tmp], capture_output=True, text=True)
+    if r.returncode != 0:
+        fail('JS syntax error:\n' + r.stderr[:400])
+    else:
+        ok('JS syntax valid')
+
+    # ── 2. APP_VERSION ────────────────────────────────────────────
+    m = re.search(r"const APP_VERSION\s*=\s*'([\d.]+)'", html)
+    version = m.group(1) if m else None
+    if not version:
+        fail('APP_VERSION not found')
+    else:
+        ok(f'APP_VERSION = {version}')
+
+    if version:
+        esc = re.escape(version)
+
+        # ── 3. Header headline ────────────────────────────────────
+        if not re.search(rf'//\s*v{esc}\s+\d{{4}}-\d{{2}}-\d{{2}}\s+.{{5,}}', html):
+            fail(f'No header changelog headline for v{version}')
+        else:
+            ok(f'Header headline for v{version}')
+
+        # ── 4. CHANGELOG.md full entry ────────────────────────────
+        cl = os.path.join(base, 'CHANGELOG.md')
+        if not os.path.exists(cl):
+            fail('CHANGELOG.md not found')
+        elif not re.search(rf'^##\s*v{esc}\s', open(cl, encoding='utf-8').read(), re.M):
+            fail(f'CHANGELOG.md has no entry for v{version}')
+        else:
+            ok(f'CHANGELOG.md entry for v{version}')
+
+        # ── 7. UI version string ──────────────────────────────────
+        if f'<span id="verString">v{version}</span>' not in html:
+            fail(f'UI version string does not read v{version}')
+        else:
+            ok('UI version string matches')
+
+    # ── 5. Header not bloated ─────────────────────────────────────
+    entries = re.findall(r'^// v[\d.]+\s', html, re.M)
+    if len(entries) > KEEP_IN_HEADER:
+        fail(f'Header holds {len(entries)} versions, limit is {KEEP_IN_HEADER}')
+    else:
+        ok(f'Header holds {len(entries)} versions')
+    if re.search(r'\[describe changes here\]', html):
+        fail('Changelog placeholder left in the file')
+    else:
+        ok('No changelog placeholder')
+
+    # ── 6. BUILD_TIME ─────────────────────────────────────────────
+    bt = re.search(r"const BUILD_TIME\s*=\s*'([^']+)'", html)
+    if not bt:
+        fail('BUILD_TIME not found')
+    elif not re.match(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2} (AM|PM) ET$', bt.group(1)):
+        fail(f'BUILD_TIME is not Eastern Time format: {bt.group(1)}')
+    else:
+        ok(f'BUILD_TIME = {bt.group(1)}')
+
+    # ── 8/9. Service worker ───────────────────────────────────────
+    sw_path = os.path.join(base, 'sw.js')
+    if not os.path.exists(sw_path):
+        fail('sw.js not found')
+    else:
+        sw = open(sw_path, encoding='utf-8').read()
+        r = subprocess.run(['node', '--check', sw_path], capture_output=True, text=True)
+        if r.returncode != 0:
+            fail('sw.js syntax error:\n' + r.stderr[:300])
+        else:
+            ok('sw.js syntax valid')
+        swm = re.search(r"CACHE_NAME\s*=\s*'killer-bs-v([\d.]+)'", sw)
+        if not swm:
+            fail('Could not parse sw.js CACHE_NAME')
+        elif version and swm.group(1) != version:
+            fail(f'sw.js CACHE_NAME v{swm.group(1)} != APP_VERSION v{version}')
+        else:
+            ok(f'sw.js CACHE_NAME matches v{version}')
+        if 'SKIP_WAITING' not in sw:
+            fail('sw.js does not honour SKIP_WAITING — updates would stall')
+        else:
+            ok('sw.js honours SKIP_WAITING')
+        for a in ASSETS:
+            if a not in sw:
+                fail(f'{a} is not precached in sw.js')
+        else:
+            ok(f'All {len(ASSETS)} assets precached in sw.js')
+
+    # ── 10. Update handshake on the page ──────────────────────────
+    for needle, label in [('SKIP_WAITING', 'page requests SKIP_WAITING'),
+                          ('controllerchange', 'page reloads on controllerchange'),
+                          ('beforeinstallprompt', 'install prompt captured'),
+                          ('CAN_STORE', 'storage availability probed')]:
+        if needle not in html:
+            fail(f'missing: {label}')
+        else:
+            ok(label)
+
+    # ── 10b. The mark must be transparent ─────────────────────────
+    # A white-backed logo shows as a white square on the parchment page.
+    mark = os.path.join(base, 'mark.png')
+    if os.path.exists(mark):
+        try:
+            import struct, zlib
+            with open(mark, 'rb') as f:
+                head = f.read(26)
+            colour_type = head[25]
+            if colour_type not in (4, 6):
+                fail('mark.png has no alpha channel — it will show as a box')
+            else:
+                ok('mark.png carries transparency')
+        except Exception as e:
+            fail('could not read mark.png: %s' % e)
+
+    # ── 11. Manifest ──────────────────────────────────────────────
+    mf = os.path.join(base, 'manifest.json')
+    if not os.path.exists(mf):
+        fail('manifest.json not found')
+    else:
+        try:
+            man = json.load(open(mf, encoding='utf-8'))
+            if not any(i.get('purpose') == 'maskable' for i in man.get('icons', [])):
+                fail('manifest.json has no maskable icon')
+            else:
+                ok('manifest.json valid with a maskable icon')
+        except Exception as e:
+            fail(f'manifest.json does not parse: {e}')
+
+    # ── 12. Data payloads ─────────────────────────────────────────
+    for name, keys in [('data.json', ['catalog', 'bottles', 'flights']),
+                       ('map.json', ['world', 'states', 'coast', 'distilleries'])]:
+        p = os.path.join(base, name)
+        if not os.path.exists(p):
+            fail(f'{name} not found')
+            continue
+        try:
+            d = json.load(open(p, encoding='utf-8'))
+            missing = [k for k in keys if k not in d]
+            if missing:
+                fail(f'{name} is missing {", ".join(missing)}')
+            else:
+                ok(f'{name} parses and holds {", ".join(keys)}')
+        except Exception as e:
+            fail(f'{name} does not parse: {e}')
+
+    # ── 14. Lock files ────────────────────────────────────────────
+    if version:
+        for lock in [f'killer-bs-v{version}.html', f'killer-bs-v{version}-sw.js']:
+            if not os.path.exists(os.path.join(base, lock)):
+                fail(f'lock file missing: {lock}')
+            else:
+                ok(f'lock file {lock}')
+
+    print()
+    if failures == 0:
+        print('  \u2714 All checks passed — safe to deliver\n')
+    else:
+        print(f'  \u2716 {failures} check(s) failed — DO NOT DELIVER\n')
+    return failures == 0
+
+
+if __name__ == '__main__':
+    path = sys.argv[1] if len(sys.argv) > 1 else \
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html')
+    sys.exit(0 if run_audit(path) else 1)

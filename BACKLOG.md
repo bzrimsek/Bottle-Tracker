@@ -39,7 +39,16 @@ or by account. Until then all data is local to the browser.
 
 ---
 
-## 3. Bottle lookup by name  — deferred to v2 by design
+## 3. Bottle lookup by name  — backend written, needs your key
+
+lookup.gs ships with the app. It does two jobs: serves the Add a bottle
+lookup, and batch-sources tasting notes for the 138 bottles that have
+none. To turn it on: paste it into script.google.com, add ANTHROPIC_KEY
+to Script Properties, deploy as a web app, and paste the /exec URL into
+Info -> Our data -> Bottle lookup. Nothing in the app changes until you
+do; adding a bottle stays manual and free.
+
+## 3b. Original deferral, for the record  — deferred to v2 by design
 
 The Shop tab (v0.1.16) does the shelf-fit half of this offline: you type
 the proof, price and type from the label and it judges the bottle against

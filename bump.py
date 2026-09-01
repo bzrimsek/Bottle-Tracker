@@ -12,9 +12,13 @@ Writes five locations, matching the MadGolf convention:
   4. index.html  UI string  <span id="verString">
   5. sw.js       CACHE_NAME
 
-Plus the changelog entry, written once to the single canonical CHANGELOG
-block, newest first, in MadGolf's line format:
-    // vX.Y.Z  YYYY-MM-DD  entry text
+Plus the changelog, written in two places from one entry:
+  - index.html's canonical CHANGELOG block gets the HEADLINE only (the first
+    sentence, capped), newest first, in MadGolf's line format:
+        // vX.Y.Z  YYYY-MM-DD  headline
+  - CHANGELOG.md gets the entry in full.
+The header keeps the most recent KEEP_IN_HEADER versions; older ones live on
+in CHANGELOG.md. Nothing is lost, and the header stays readable at v2.00.
 
 Build stamps are Eastern Time, as MadGolf's are.
 
@@ -22,6 +26,7 @@ Usage:
     python3 bump.py "changelog entry describing this change"
 """
 import re
+import shutil
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +34,22 @@ from pathlib import Path
 HERE = Path(__file__).parent
 INDEX = HERE / 'index.html'
 SW = HERE / 'sw.js'
+CHANGELOG = HERE / 'CHANGELOG.md'
+
+# How many versions stay in the file header. Older entries are still in
+# CHANGELOG.md; this only governs how far a reader scrolls to reach the code.
+KEEP_IN_HEADER = 10
+HEADLINE_MAX = 150
+ROLLED = '// Older entries are in CHANGELOG.md.'
+
+
+def headline(entry):
+    """First sentence, trimmed to something that fits one line."""
+    m = re.match(r'(.+?[.!?])(\s|$)', entry)
+    head = (m.group(1) if m else entry).strip()
+    if len(head) > HEADLINE_MAX:
+        head = head[:HEADLINE_MAX].rsplit(' ', 1)[0].rstrip(' ,;:') + '\u2026'
+    return head
 
 
 def eastern_now():
@@ -87,12 +108,22 @@ def main():
     if not n:
         sys.exit('Header "Version :" line not found — cannot bump.')
 
-    # changelog entry: newest first, directly under the CHANGELOG marker
+    # Header carries the headline; CHANGELOG.md carries the whole entry.
+    head = headline(entry)
     html, n = re.subn(r'(\nCHANGELOG\n)',
-                      lambda m: m.group(1) + '// v%s  %s  %s\n' % (ver, day, entry),
+                      lambda m: m.group(1) + '// v%s  %s  %s\n' % (ver, day, head),
                       html, count=1)
     if not n:
         sys.exit('CHANGELOG block not found — cannot bump.')
+
+    # Keep only the most recent KEEP_IN_HEADER versions in the header.
+    block = re.search(r'\nCHANGELOG\n((?:(?://.*)?\n)+?)-->', html)
+    if block:
+        lines = [l for l in block.group(1).split('\n')
+                 if l.startswith('// v')]
+        if len(lines) > KEEP_IN_HEADER:
+            html = html.replace(block.group(1),
+                                '\n'.join(lines[:KEEP_IN_HEADER] + [ROLLED]) + '\n', 1)
 
     # 2-4. constants and UI string
     html = re.sub(r"(const APP_VERSION\s*=\s*')[\d.]+(')",
@@ -108,11 +139,39 @@ def main():
     if not n:
         sys.exit('CACHE_NAME not found in sw.js — cannot bump.')
 
+    # CHANGELOG.md: newest first, full text, one section per version.
+    header = ("# Killer B's Bottle Tracker \u2014 changelog\n\n"
+              "Newest first. The file header in index.html carries the "
+              "headlines; the full entries live here.\n")
+    body = CHANGELOG.read_text() if CHANGELOG.exists() else header
+    record = '\n## v%s  \u00b7  %s\n\n%s\n' % (ver, stamp, entry)
+    marker = 'live here.\n'
+    if marker in body:
+        body = body.replace(marker, marker + record, 1)
+    else:
+        body = body.rstrip() + '\n' + record
+
     INDEX.write_text(html)
     SW.write_text(sw)
+    CHANGELOG.write_text(body)
+
+    # Lock files, cut from the working copies just written (rule 23).
+    lock_html = HERE / ('killer-bs-v%s.html' % ver)
+    lock_sw = HERE / ('killer-bs-v%s-sw.js' % ver)
+    shutil.copy(INDEX, lock_html)
+    shutil.copy(SW, lock_sw)
+    # Previous version's locks are superseded; leaving them accumulates
+    # near-identical files nobody reads.
+    for old in HERE.glob('killer-bs-v*'):
+        if old.name not in (lock_html.name, lock_sw.name) \
+                and re.match(r'killer-bs-v[\d.]+(-sw\.js|\.html)$', old.name):
+            old.unlink()
     print('bumped to v%s  Build %s' % (ver, stamp))
-    print('changelog: // v%s  %s  %s' % (ver, day, entry))
-    print('lock file: killer-bs-v%s.html' % ver)
+    print('header:    // v%s  %s  %s' % (ver, day, head))
+    if head.rstrip('\u2026') != entry.strip().rstrip('.'):
+        print('full entry (%d chars) written to CHANGELOG.md' % len(entry))
+    print('locks:     killer-bs-v%s.html + killer-bs-v%s-sw.js' % (ver, ver))
+    print('now run:   python3 ship.py')
 
 
 if __name__ == '__main__':

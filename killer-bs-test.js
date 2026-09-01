@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /*
- * Killer B's Bottle Tracker test harness.
+ * Dram test harness.
  *
  * Every expected value below was computed by hand or in a separate Node
  * session BEFORE the assertion was written. No test derives its expected
  * value from the code under test.
  *
- * Run: node killer-bs-test.js
+ * Run: node dram-test.js
  */
 const fs = require('fs');
 const path = require('path');
@@ -117,6 +117,82 @@ eq('type and status combine', L.shelfFilter(shelfProds, bottles,
 eq('no match returns empty', L.shelfFilter(shelfProds, bottles,
   { status: 'open', q: 'zzz' }).length, 0);
 
+sec('shelf facets');
+// Every facet is an independent AND gate; an empty list turns it off.
+const facetCat = {
+  a: { k: 'a', name: 'Alpha', dist: 'D1', sub: 'scotch', region: 'Islay',
+       proof: 86, msrp: 40, obsc: 'known', scar: 'standard', age: 10,
+       fin: 'Oloroso', wine: true },
+  b: { k: 'b', name: 'Bravo', dist: 'D2', sub: 'bourbon', region: null,
+       proof: 110, msrp: 150, obsc: 'obscure', scar: 'limited', age: null,
+       fin: 'Toasted Oak', wine: false },
+  c: { k: 'c', name: 'Charlie', dist: 'D3', sub: 'scotch', region: 'Speyside',
+       proof: 125, msrp: 250, obsc: 'niche', scar: 'exclusive', age: 21,
+       fin: null, wine: null }
+};
+const facetBottles = ['a', 'b', 'c'].map((k, i) => ({ id: 'F' + i, k, status: 'open' }));
+const F = o => L.shelfFilter(Object.values(facetCat), facetBottles,
+  Object.assign({ status: 'all' }, o)).map(p => p.k);
+
+eq('no facets shows everything', F({}), ['a', 'b', 'c']);
+eq('recognition', F({ obsc: ['obscure'] }), ['b']);
+eq('recognition takes several', F({ obsc: ['obscure', 'niche'] }), ['b', 'c']);
+eq('region', F({ regions: ['Islay'] }), ['a']);
+eq('release', F({ scars: ['exclusive'] }), ['c']);
+eq('occasion band', F({ bands: ['everyday'] }), ['a']);
+eq('proof band', F({ proofs: ['ge120'] }), ['c']);
+eq('proof band takes several', F({ proofs: ['le90', 'ge120'] }), ['a', 'c']);
+// Cask is one-of-three: wine and wood-only are mutually exclusive, and
+// "no finish" is a third state, not the absence of a selection.
+eq('wine cask only', F({ cask: 'wine' }), ['a']);
+eq('wood only', F({ cask: 'wood' }), ['b']);
+eq('no finish at all', F({ cask: 'none' }), ['c']);
+eq('unknown wine status is not wood', F({ cask: 'wood' }).indexOf('c'), -1);
+eq('age stated', F({ age: 'stated' }), ['a', 'c']);
+eq('no age stated', F({ age: 'nas' }), ['b']);
+// Facets AND together: Scotch AND exclusive is only Charlie.
+eq('facets combine', F({ types: ['scotch'], scars: ['exclusive'] }), ['c']);
+eq('a contradiction shows nothing', F({ types: ['scotch'], obsc: ['obscure'] }), []);
+// Status still applies on top of everything else.
+eq('status gates the facets too', L.shelfFilter(Object.values(facetCat),
+  [{ id: 'x', k: 'a', status: 'sealed' }, { id: 'y', k: 'b', status: 'open' }],
+  { status: 'open', types: ['scotch'] }).length, 0);
+
+sec('active facet count');
+eq('nothing on', L.activeFacets({ types: [], obsc: [] }), 0);
+eq('one list on', L.activeFacets({ types: ['scotch'], obsc: [] }), 1);
+eq('several values in one list still count once',
+  L.activeFacets({ types: ['scotch', 'irish'] }), 1);
+eq('cask counts', L.activeFacets({ cask: 'wine' }), 1);
+eq('age counts', L.activeFacets({ age: 'nas' }), 1);
+eq('everything on', L.activeFacets({ types: ['a'], obsc: ['b'], regions: ['c'],
+  bands: ['d'], proofs: ['e'], scars: ['f'], cask: 'wine', age: 'nas' }), 8);
+
+sec('shelf sort');
+const S3 = Object.values(facetCat);
+eq('by name', L.shelfSort(S3, 'name').map(p => p.k), ['a', 'b', 'c']);
+eq('proof ascending', L.shelfSort(S3, 'proof').map(p => p.proof), [86, 110, 125]);
+eq('proof descending', L.shelfSort(S3, 'proofd').map(p => p.proof), [125, 110, 86]);
+eq('dearest first', L.shelfSort(S3, 'price').map(p => p.msrp), [250, 150, 40]);
+eq('cheapest first', L.shelfSort(S3, 'cheap').map(p => p.msrp), [40, 150, 250]);
+eq('by distillery', L.shelfSort(S3, 'dist').map(p => p.dist), ['D1', 'D2', 'D3']);
+// A no-age-stated bottle must sort LAST on age, not pose as the youngest.
+eq('oldest first, NAS last', L.shelfSort(S3, 'age').map(p => p.k), ['c', 'a', 'b']);
+// Same for a missing price on either direction.
+const noPriceSet = S3.concat([{ k: 'z', name: 'Zulu', proof: 100, dist: 'D9' }]);
+eq('missing price sorts last when dearest first',
+  L.shelfSort(noPriceSet, 'price').map(p => p.k).slice(-1), ['z']);
+eq('missing price sorts last when cheapest first',
+  L.shelfSort(noPriceSet, 'cheap').map(p => p.k).slice(-1), ['z']);
+// Ties fall back to name so the order never depends on insertion.
+const tied = [{ k: 'y', name: 'Yankee', proof: 90 }, { k: 'x', name: 'Xray', proof: 90 }];
+eq('ties break on name', L.shelfSort(tied, 'proof').map(p => p.k), ['x', 'y']);
+eq('an unknown sort falls back to name', L.shelfSort(S3, 'zzz').map(p => p.k),
+  ['a', 'b', 'c']);
+eq('sorting does not mutate the input', S3.map(p => p.k), ['a', 'b', 'c']);
+eq('every declared sort works',
+  L.SORTS.every(s => L.shelfSort(S3, s.id).length === 3), true);
+
 /* ---------------- pick my pour ---------------- */
 sec('pick my pour');
 // Raasay: never poured (+40), obscure (+18), finished in wine (+7) = 65.
@@ -201,6 +277,170 @@ const pairCat = { A: { k: 'A', name: 'A', proof: 104.4, obsc: 'obscure' },
 const pairB = [{ id: 'p1', k: 'A', status: 'open' }, { id: 'p2', k: 'B', status: 'open' }];
 v = L.validate([{ k: 'A' }, { k: 'B' }], pairCat, { bottles: pairB, coreTarget: 2 });
 eq('matched pair detected', v.some(m => m.level === 'ok' && /1 matched pair/.test(m.msg)), true);
+
+/* ---------------- tasting notes ---------------- */
+sec('distiller notes');
+const tnP = { k: 'x', tn: { nose: 'Iodine, tar', colour: 'Pale gold',
+                            finish: 'Very long', palate: 'Medicinal' } };
+// Always colour, nose, palate, finish -- the order of the sheet columns,
+// not the order the object happens to hold them in.
+eq('notes come back in sheet order', L.tastingNotes(tnP).map(n => n.label),
+  ['Colour', 'Nose', 'Palate', 'Finish']);
+eq('text carried through', L.tastingNotes(tnP)[0].text, 'Pale gold');
+eq('a partial set keeps its order',
+  L.tastingNotes({ tn: { finish: 'Long', nose: 'Smoke' } }).map(n => n.label),
+  ['Nose', 'Finish']);
+eq('no notes is empty', L.tastingNotes({ k: 'y' }), []);
+
+// Provenance: a card note, a sourced note and your own are three different
+// levels of trust and must never read as the same claim.
+// The flight-card notes were written FOR the cards, not taken from a
+// producer. The label has to say so or they pose as sourced fact.
+eq('card notes are marked as prompts',
+  L.tnSource({ tn: { nose: 'x' }, tnFrom: 'SHERRY IS NOT ONE THING' }),
+  'Written for the Sherry is not one thing card \u2014 a prompt, not a source');
+eq('no source claims to be the producer',
+  /producer/.test(L.tnSource({ tn: { nose: 'x' }, tnFrom: 'A FLIGHT' })), false);
+eq('your own notes say so',
+  L.tnSource({ tn: { nose: 'x' }, tnSrc: 'you' }), 'your own tasting');
+eq('producer notes say so',
+  L.tnSource({ tn: { nose: 'x' }, tnSrc: 'distiller' }), "the producer's own notes");
+eq('an explicit source beats the card credit',
+  L.tnSource({ tn: { nose: 'x' }, tnSrc: 'you', tnFrom: 'A FLIGHT' }),
+  'your own tasting');
+eq('no notes means no source', L.tnSource({ k: 'z' }), null);
+eq('an unknown source falls back to the card wording',
+  /prompt, not a source/.test(
+    L.tnSource({ tn: { nose: 'x' }, tnSrc: 'zzz', tnFrom: 'A FLIGHT' })), true);
+
+sec('tasting note coverage');
+const covCat = { a: { tn: { nose: 'x' } }, b: { tn: { nose: 'y' }, tnSrc: 'you' },
+                 c: {}, d: {} };
+eq('counts the described', L.tnCoverage(covCat)['with'], 2);
+eq('counts the blanks', L.tnCoverage(covCat).without, 2);
+eq('totals', L.tnCoverage(covCat).total, 4);
+eq('splits by source', L.tnCoverage(covCat).bySource, { card: 1, you: 1 });
+eq('an empty catalog is safe', L.tnCoverage({}).total, 0);
+eq('null product is safe', L.tastingNotes(null), []);
+
+/* ---------------- dated logging ---------------- */
+sec('recording when something happened');
+// A completion is dated by the user, never assumed to be now.
+eq('today is an ISO date', /^\d{4}-\d{2}-\d{2}$/.test(L.todayISO()), true);
+eq('a real date passes', L.validDate('2026-08-31'), true);
+eq('the 31st of February is rejected', L.validDate('2026-02-31'), false);
+eq('the 30th of February is rejected', L.validDate('2026-02-30'), false);
+eq('a leap day passes', L.validDate('2024-02-29'), true);
+eq('a non-leap 29 February is rejected', L.validDate('2026-02-29'), false);
+eq('a malformed date is rejected', L.validDate('31/08/2026'), false);
+eq('empty is rejected', L.validDate(''), false);
+eq('null is rejected', L.validDate(null), false);
+// You cannot log a tasting you have not had yet.
+const future = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
+eq('a future date is rejected', L.validDate(future), false);
+
+eq('a valid date is kept', L.logEntry('pour', { k: 'a' }, '2026-07-04').at, '2026-07-04');
+eq('an invalid date falls back to today',
+  L.logEntry('pour', { k: 'a' }, 'rubbish').at, L.todayISO());
+eq('payload carried through', L.logEntry('pour', { k: 'a' }, '2026-07-04').k, 'a');
+eq('kind carried through', L.logEntry('flight', {}, '2026-07-04').kind, 'flight');
+
+/* ---------------- flight browsing ---------------- */
+sec('flight readiness and browsing');
+const fCat = {
+  a: { k: 'a', name: 'Alpha', sub: 'scotch', proof: 86 },
+  b: { k: 'b', name: 'Bravo', sub: 'scotch', proof: 110 },
+  c: { k: 'c', name: 'Charlie', sub: 'bourbon', proof: 100 }
+};
+const fBottles = [{ id: 'q1', k: 'a', status: 'open' },
+                  { id: 'q2', k: 'b', status: 'sealed' },
+                  { id: 'q3', k: 'c', status: 'open' }];
+const F1 = { title: 'SHERRY IS NOT ONE THING', tag: 'ONE VARIABLE: WHICH SHERRY',
+             premise: 'Six malts.', core: [{ k: 'a' }, { k: 'b' }], ext: [] };
+const F2 = { title: 'PROOF IS NOT A SCORE', tag: '', premise: 'Bourbon.',
+             core: [{ k: 'c' }], ext: [] };
+const fHist = [{ kind: 'flight', flight: 'PROOF IS NOT A SCORE', at: '2026-06-01' },
+               { kind: 'flight', flight: 'PROOF IS NOT A SCORE', at: '2026-08-01' }];
+
+eq('half the pours are open', L.flightReady(F1, fCat, fBottles).pct, 50);
+eq('all pours open', L.flightReady(F2, fCat, fBottles).pct, 100);
+eq('an empty flight is not ready', L.flightReady({ core: [] }, fCat, fBottles).pct, 0);
+// The latest run wins when a flight has been run more than once.
+eq('most recent run date', L.flightRunAt(F2, fHist), '2026-08-01');
+eq('never run is null', L.flightRunAt(F1, fHist), null);
+eq('lowest proof in the flight', L.flightProof(F1, fCat), 86);
+
+const FF = o => L.filterFlights([F1, F2], fCat, fBottles, fHist, o).map(f => f.title);
+eq('no filter shows both', FF({}).length, 2);
+eq('not run', FF({ state: 'todo' }), ['SHERRY IS NOT ONE THING']);
+eq('run', FF({ state: 'run' }), ['PROOF IS NOT A SCORE']);
+eq('fully pourable', FF({ state: 'ready' }), ['PROOF IS NOT A SCORE']);
+eq('by type of its pours', FF({ types: ['bourbon'] }), ['PROOF IS NOT A SCORE']);
+// Search reaches the title, the premise and the names of the pours.
+eq('search the title', FF({ q: 'sherry' }), ['SHERRY IS NOT ONE THING']);
+eq('search the premise', FF({ q: 'six malts' }), ['SHERRY IS NOT ONE THING']);
+eq('search a pour name', FF({ q: 'charlie' }), ['PROOF IS NOT A SCORE']);
+eq('search the variable', FF({ q: 'which sherry' }), ['SHERRY IS NOT ONE THING']);
+eq('no match is empty', FF({ q: 'zzzz' }), []);
+
+const FS = id => L.sortFlights([F1, F2], fCat, fBottles, fHist, id).map(f => f.title);
+eq('curriculum order is untouched', FS('curriculum'),
+  ['SHERRY IS NOT ONE THING', 'PROOF IS NOT A SCORE']);
+eq('by name', FS('title'), ['PROOF IS NOT A SCORE', 'SHERRY IS NOT ONE THING']);
+eq('most ready first', FS('ready'), ['PROOF IS NOT A SCORE', 'SHERRY IS NOT ONE THING']);
+eq('lowest proof first', FS('proof'), ['SHERRY IS NOT ONE THING', 'PROOF IS NOT A SCORE']);
+// Never-run must sort LAST on recency, not first.
+eq('recently run first, never-run last', FS('run'),
+  ['PROOF IS NOT A SCORE', 'SHERRY IS NOT ONE THING']);
+eq('curriculum sort does not mutate',
+  L.sortFlights([F1, F2], fCat, fBottles, fHist, 'title')[0].title !== F1.title, true);
+
+/* ---------------- history ---------------- */
+sec('the log');
+const hCat = { a: { k: 'a', name: 'Alpha' }, b: { k: 'b', name: 'Bravo' } };
+const hFl = [{ title: 'PEAT IS A POSTCODE' }];
+const log = [
+  { kind: 'pour', k: 'a', at: '2026-06-01' },
+  { kind: 'flight', flight: 'PEAT IS A POSTCODE', at: '2026-08-01', pours: ['a', 'b'] },
+  { kind: 'pour', k: 'b', at: '2026-08-15' },
+  { kind: 'pour', k: 'gone', at: '2026-08-20' },
+  { kind: 'flight', flight: 'DELETED FLIGHT', at: '2026-08-21' }
+];
+eq('newest first', L.historyRows(log, hCat, hFl).map(x => x.at),
+  ['2026-08-15', '2026-08-01', '2026-06-01']);
+// An entry whose bottle or flight has been deleted is dropped, not shown as
+// a bare key.
+eq('deleted subjects are dropped', L.historyRows(log, hCat, hFl).length, 3);
+eq('pours only', L.historyRows(log, hCat, hFl, 'pour').map(x => x.k), ['b', 'a']);
+eq('flights only', L.historyRows(log, hCat, hFl, 'flight').map(x => x.flight),
+  ['PEAT IS A POSTCODE']);
+eq('names resolved', L.historyRows(log, hCat, hFl, 'pour')[0].label, 'Bravo');
+eq('flight titles read as headings',
+  L.historyRows(log, hCat, hFl, 'flight')[0].label, 'Peat is a postcode');
+// The index is carried so a row can be removed from the real array.
+eq('the original index is kept', L.historyRows(log, hCat, hFl, 'pour')[0]._i, 2);
+// Two entries on one day keep their logged order rather than shuffling.
+const sameDay = [{ kind: 'pour', k: 'a', at: '2026-08-01' },
+                 { kind: 'pour', k: 'b', at: '2026-08-01' }];
+eq('same-day order is last-logged first',
+  L.historyRows(sameDay, hCat, hFl, 'pour').map(x => x.k), ['b', 'a']);
+eq('an empty log is safe', L.historyRows([], hCat, hFl), []);
+eq('a null log is safe', L.historyRows(null, hCat, hFl), []);
+
+sec('history by month');
+const months = L.historyByMonth([
+  { kind: 'pour', at: L.todayISO() },
+  { kind: 'pour', at: L.todayISO() },
+  { kind: 'flight', at: L.todayISO() },
+  { kind: 'pour', at: '2019-01-05' }
+], 'pour', 6);
+eq('six buckets', Object.keys(months).length, 6);
+eq('this month counts the pours', months[L.todayISO().slice(0, 7)], 2);
+eq('a flight does not count as a pour',
+  L.historyByMonth([{ kind: 'flight', at: L.todayISO() }], 'pour', 6)[L.todayISO().slice(0, 7)], 0);
+eq('anything outside the window is ignored',
+  Object.values(months).reduce((a, b) => a + b, 0), 2);
+eq('buckets run oldest to newest', Object.keys(months)[5], L.todayISO().slice(0, 7));
 
 /* ---------------- overuse ---------------- */
 sec('overuse control');
@@ -320,6 +560,62 @@ eq('last face on recognition', spun.obsc, 'obscure');
 eq('last face on occasion', spun.price, 'vault');
 // Holding everything makes a spin a no-op.
 eq('all held is a no-op', L.spin(cur, { proof: 1, type: 1, obsc: 1, price: 1 }, last), cur);
+
+sec('a spin always pays out');
+// The machine must never land on a combination nothing satisfies. Rather
+// than rolling blind, spinValid picks a bottle that satisfies the held reels
+// and describes it with the unheld ones.
+eq('a bottle maps to a face on every reel',
+  Object.keys(L.facesOf(catalog['Raasay Dun Cana @ 104.0'])).sort(),
+  ['obsc', 'price', 'proof', 'type']);
+eq('raasay is obscure on the recognition reel',
+  L.facesOf(catalog['Raasay Dun Cana @ 104.0']).obsc, 'obscure');
+eq('raasay at 104 lands in the 90-105 band',
+  L.facesOf(catalog['Raasay Dun Cana @ 104.0']).proof, '90-105');
+eq('AE at 119.8 lands in 105-120',
+  L.facesOf(catalog['AE Single Barrel @ 119.8']).proof, '105-120');
+
+// Every spin over the fixture shelf must leave at least one pour standing.
+// rnd cycles so the harness walks a spread of picks rather than one.
+let seed = 0;
+const cycling = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+let emptyPaylines = 0;
+let reelState = { proof: 'any', type: 'any', obsc: 'any', price: 'any' };
+for (let i = 0; i < 300; i++) {
+  const nxt = L.spinValid(reelState, {}, catalog, bottles, cycling);
+  if (!nxt) { emptyPaylines++; continue; }
+  reelState = nxt;
+  if (L.reelMatches(catalog, bottles, reelState, []).length === 0) emptyPaylines++;
+}
+eq('300 spins, no empty payline', emptyPaylines, 0);
+
+// A held reel is respected and still pays.
+let heldFails = 0;
+reelState = { proof: 'any', type: 'scotch', obsc: 'any', price: 'any' };
+for (let i = 0; i < 100; i++) {
+  const nxt = L.spinValid(reelState, { type: true }, catalog, bottles, cycling);
+  if (!nxt) { heldFails++; continue; }
+  reelState = nxt;
+  if (reelState.type !== 'scotch') heldFails++;
+  if (L.reelMatches(catalog, bottles, reelState, []).length === 0) heldFails++;
+}
+eq('holds are kept and still pay out', heldFails, 0);
+
+// Holds that rule out everything return null so the caller can say so,
+// rather than spinning to an empty line.
+eq('unsatisfiable holds return null',
+  L.spinValid({ proof: 'le90', type: 'bourbon', obsc: 'any', price: 'any' },
+    { proof: true, type: true }, catalog, bottles, cycling), null);
+// A sealed-only shelf can never pay out either.
+eq('nothing open returns null', L.spinValid(
+  { proof: 'any', type: 'any', obsc: 'any', price: 'any' }, {},
+  catalog, [{ id: 'z', k: 'Lagavulin 16 @ 86.0', status: 'sealed' }], cycling), null);
+// A drained bottle is not a candidate.
+eq('drained bottles cannot be spun to', L.spinValid(
+  { proof: 'any', type: 'any', obsc: 'any', price: 'any' }, {},
+  { x: { k: 'x', name: 'X', proof: 90, sub: 'bourbon', obsc: 'known', msrp: 40,
+         drained: true } },
+  [{ id: 'z', k: 'x', status: 'open' }], cycling), null);
 
 sec('the payout line');
 // Fixture: Raasay is open/obscure/104 proof/$104.99 -> special.
@@ -538,15 +834,76 @@ eq('non-scotch excluded', pins[0].total, 2);
 eq('uncoordinated distillery dropped', pins.some(p => p.dist === 'Nowhere'), false);
 eq('region carried onto the pin', pins[0].region, 'Islay');
 
-// Radius grows with the square root, so twelve does not swamp one.
-eq('one bottle', L.pinRadius(1), 1.45);
-eq('four bottles', L.pinRadius(4), 2);
-eq('nine bottles', L.pinRadius(9), 2.55);
-eq('growth is sub-linear', L.pinRadius(16) < L.pinRadius(1) * 4, true);
+// Radius is a FRACTION OF THE MAP, not a pixel count. A fixed 1.45 on a map
+// 4.55 degrees wide was 64% of Scotland; this is the bug that made the pins
+// swallow the country.
+// Scotland: span 4.55, largest distillery 12 bottles.
+eq('smallest pin is the floor', L.pinRadius(1, 100, 1), 4.5);
+eq('a single bottle in a busy set is near the floor',
+  Math.round(L.pinRadius(1, 100, 100) * 100) / 100, 1.53);
+eq('the largest count reaches the ceiling', L.pinRadius(100, 100, 100), 4.5);
+eq('growth is sub-linear', L.pinRadius(4, 100, 16) < L.pinRadius(16, 100, 16), true);
+// No pin may exceed 9% of the map width, whatever the counts.
+[1, 12, 80, 185, 5000].forEach(n => {
+  eq('pin at n=' + n + ' stays under a tenth of the map',
+    L.pinRadius(n, 100, n) * 2 <= 9.01, true);
+});
+eq('a zero count still draws something', L.pinRadius(0, 100, 10) > 0, true);
+eq('a missing span does not produce NaN', isNaN(L.pinRadius(3)), false);
+
+sec('map type sizes');
+// Type is in map units too, for the same reason the radii are.
+eq('name type scales with the map', L.mapFont(100, 'name'), 2.6);
+eq('count type is smaller', L.mapFont(100, 'count'), 2);
+eq('a narrow map gets small type', L.mapFont(4.55, 'name') < 0.13, true);
+
+sec('zoom ceiling');
+// Pins hold a constant SCREEN size, so they must shrink by the zoom, not by
+// its square root -- otherwise a cluster can never come apart.
+// Ardbeg and Lagavulin are 0.011 map units apart; their radii sum is 0.336
+// at 1x, so they separate once 0.336 / z < 0.011, i.e. above about 31x.
+eq('the ceiling clears the tightest cluster', L.MAP_ZOOM.max > 31, true);
+eq('zoom floor is the whole map', L.MAP_ZOOM.min, 1);
+
+sec('per-layer zoom ceilings');
+// One ceiling cannot serve a map 4.5 degrees wide and one 35.6 wide. Each
+// layer's is set against its own tightest real cluster.
+eq('scotland resolves the islay trio', L.zoomCeiling('scotland'), 80);
+eq('the us needs far more for Bardstown', L.zoomCeiling('us'), 900);
+eq('the world layer has no cluster to resolve', L.zoomCeiling('world'), 40);
+eq('an unknown layer falls back', L.zoomCeiling('zzz'), L.MAP_ZOOM.max);
+eq('the ceiling is applied per layer', L.clampZoom(5000, 'us'), 900);
+eq('scotland is not given the us ceiling', L.clampZoom(5000, 'scotland'), 80);
+eq('no layer means the default ceiling', L.clampZoom(5000), L.MAP_ZOOM.max);
+eq('the floor is the whole map on every layer', L.clampZoom(0.01, 'us'), 1);
+
+sec('co-located pins fan out');
+// Two pins on one coordinate means one can never be tapped.
+const sameSpot = {
+  A: { k: 'A', sub: 'bourbon', dist: 'Alpha Co' },
+  B: { k: 'B', sub: 'bourbon', dist: 'Bravo Co' }
+};
+const sameCoords = { 'Alpha Co': [-85.47, 37.82], 'Bravo Co': [-85.47, 37.82] };
+const fanned = L.mapPins(sameSpot, sameCoords, [], ['bourbon']);
+eq('both pins survive', fanned.length, 2);
+eq('both are marked as moved', fanned.every(p => p.fanned), true);
+eq('they no longer share a point',
+  fanned[0].lat !== fanned[1].lat || fanned[0].lon !== fanned[1].lon, true);
+// And they stay in the right town: under a mile from where they really are.
+const fanMiles = Math.max.apply(null, fanned.map(p =>
+  Math.hypot((p.lat - 37.82) * 69, (p.lon + 85.47) * 54)));
+eq('nothing moves more than a mile', fanMiles < 1, true);
+// A lone pin is left exactly where it belongs.
+const solo = L.mapPins({ A: sameSpot.A }, sameCoords, [], ['bourbon']);
+eq('a single pin is not moved', solo[0].fanned, undefined);
+eq('a single pin keeps its latitude', solo[0].lat, 37.82);
+// Fanning is deterministic: a pin must not wander between renders.
+const again = L.mapPins(sameSpot, sameCoords, [], ['bourbon']);
+eq('fanning is stable across calls', again[0].lat, fanned[0].lat);
 
 sec('zoom and clamping');
 eq('zoom floor', L.clampZoom(0.2), 1);
-eq('zoom ceiling', L.clampZoom(999), 40);
+eq('default ceiling', L.clampZoom(999), 80);
 eq('zoom passes through', L.clampZoom(7), 7);
 
 const full = { x: 0, y: 0, w: 100, h: 100 };
@@ -563,8 +920,9 @@ const zoomed = L.zoomAbout(win, full, 2, 50, 50);
 eq('zoom halves the window', zoomed.w, 50);
 eq('the focus point holds', zoomed.x + zoomed.w / 2, 50);
 eq('zooming out past the map is clamped', L.zoomAbout(zoomed, full, 0.01, 25, 25).w, 100);
+// full.w is 100 and the ceiling is 80x, so the tightest window is 1.25.
 eq('zoom in stops at the ceiling',
-  Math.round(L.zoomAbout(win, full, 1000, 50, 50).w * 100) / 100, 2.5);
+  Math.round(L.zoomAbout(win, full, 1000, 50, 50).w * 100) / 100, 1.25);
 
 /* ---------------- summary ---------------- */
 sec('shelf statistics');
@@ -767,6 +1125,94 @@ eq('even count averages the middle', L.median([1, 2, 3, 4]), 2.5);
 eq('single value', L.median([7]), 7);
 eq('empty is zero', L.median([]), 0);
 
+/* ---------------- import ---------------- */
+sec('CSV parsing');
+eq('plain rows', L.parseCSV('a,b\n1,2'), [['a', 'b'], ['1', '2']]);
+// A quoted field holding a comma is why a hand-rolled split fails.
+eq('quoted comma', L.parseCSV('a,b\n"x, y",2')[1], ['x, y', '2']);
+eq('doubled quotes become one', L.parseCSV('a\n"he said ""hi"""')[1], ['he said "hi"']);
+eq('CRLF handled', L.parseCSV('a,b\r\n1,2')[1], ['1', '2']);
+eq('a trailing newline adds no row', L.parseCSV('a,b\n1,2\n').length, 2);
+eq('blank lines are dropped', L.parseCSV('a,b\n\n1,2').length, 2);
+eq('a BOM is stripped', L.parseCSV('\ufeffname\nx')[0], ['name']);
+eq('empty input', L.parseCSV(''), []);
+
+sec('column matching');
+eq('exact names', L.matchColumns(['name', 'proof']), { name: 0, proof: 1 });
+eq('Only Drams headings', L.matchColumns(['Name', 'Distillery', 'ABV', 'Type']),
+  { name: 0, dist: 1, proof: 2, sub: 3 });
+eq('underscores and case', L.matchColumns(['Bottle_Name', 'Retail Price']),
+  { name: 0, msrp: 1 });
+eq('unknown columns are ignored', L.matchColumns(['name', 'zzz']), { name: 0 });
+eq('the first match wins', L.matchColumns(['name', 'title']).name, 0);
+
+sec('proof from a column that may hold ABV');
+// Only Drams exports ABV. For a whisky, anything under 60 can only be ABV.
+eq('43 ABV becomes 86 proof', L.readProof('43'), 86);
+eq('46 ABV becomes 92', L.readProof(46), 92);
+eq('57.5 becomes 115', L.readProof('57.5'), 115);
+eq('a real proof passes through', L.readProof('100'), 100);
+eq('115.2 is left alone', L.readProof('115.2'), 115.2);
+eq('60 is treated as a proof', L.readProof('60'), 60);
+eq('59.9 is treated as an ABV', L.readProof('59.9'), 119.8);
+eq('units are stripped', L.readProof('46% ABV'), 92);
+eq('nothing usable is null', L.readProof('n/a'), null);
+eq('empty is null', L.readProof(''), null);
+
+sec('category from loose spellings');
+eq('exact', L.readSub('bourbon'), 'bourbon');
+eq('single malt scotch', L.readSub('Single Malt Scotch'), 'scotch');
+eq('a region names its country', L.readSub('Islay'), 'scotch');
+eq('irish pot still', L.readSub('Single Pot Still'), 'irish');
+eq('a longer phrase still matches', L.readSub('Straight Bourbon Whiskey'), 'bourbon');
+eq('american single malt', L.readSub('American Single Malt'), 'american single malt');
+eq('unknown is null', L.readSub('zzz'), null);
+eq('empty is null', L.readSub(''), null);
+
+sec('preparing an import');
+const impCat = { 'Ardbeg 10 Years Old': { k: 'Ardbeg 10 Years Old',
+  name: 'Ardbeg 10 Years Old', proof: 92 } };
+const impCsv = 'Name,ABV,Type\n'
+  + '"Ardbeg 10 Years Old",46,Islay\n'
+  + '"Ardbeg 10 Years Old",46,Islay\n'
+  + '"New Bottle",50,Bourbon\n'
+  + '"No Proof Here",,Bourbon\n'
+  + '"Odd Category",100,Sasparilla\n'
+  + ',,\n';
+const prep = L.prepareImport(L.parseCSV(impCsv), impCat);
+eq('blank lines produce no rows', prep.rows.length, 5);
+eq('owned reads as exists', prep.rows[0].action, 'exists');
+// A repeat inside the file must stay a duplicate: reading it as "exists"
+// would add a second sealed spare for the same line.
+eq('a repeat inside the file is a duplicate', prep.rows[1].action, 'duplicate');
+eq('new is added', prep.rows[2].action, 'add');
+eq('no proof is skipped', prep.rows[3].action, 'skip');
+eq('summary counts', L.importSummary(prep), { add: 2, exists: 1, duplicate: 1, skip: 1 });
+eq('line numbers point at the file', prep.rows[3].line, 5);
+eq('a missing proof is flagged', prep.rows[3].issues, ['no proof']);
+// A category the app does not know falls back to bourbon and says so, rather
+// than silently filing a rum as a bourbon.
+eq('an unrecognised category is flagged',
+  prep.rows[4].issues, ['category guessed']);
+eq('the guess is a real category', prep.rows[4].sub, 'bourbon');
+eq('a recognised category is not flagged',
+  prep.rows[0].issues.indexOf('category guessed'), -1);
+eq('no header is fatal', !!L.prepareImport([['a', 'b']], {}).fatal, true);
+eq('no name column is fatal', !!L.prepareImport([['zzz'], ['1']], {}).fatal, true);
+eq('an empty file is fatal', !!L.prepareImport([], {}).fatal, true);
+
+sec('the template');
+// The template has to survive its own importer, or it is not a template.
+const tmpl = L.prepareImport(L.parseCSV(L.templateCSV()), {});
+eq('template parses', tmpl.fatal, null);
+eq('every template row imports', L.importSummary(tmpl),
+  { add: 3, exists: 0, duplicate: 0, skip: 0 });
+eq('no template row has an issue', tmpl.rows.every(r => r.issues.length === 0), true);
+eq('the template ABV example doubles', tmpl.rows[2].proof, 92);
+eq('sealed status is read', tmpl.rows[1].status, 'sealed');
+eq('every documented column is recognised',
+  L.TEMPLATE_COLS.filter(c => Object.keys(L.matchColumns([c])).length === 0), []);
+
 /* ---------------- reference ---------------- */
 sec('reference');
 eq('three groups', L.REF_GROUPS.length, 3);
@@ -892,8 +1338,16 @@ const violations = Object.keys(byKey).filter(k =>
   byKey[k].filter(b => b.status === 'open').length !== 1);
 eq('every product has exactly one open bottle', violations.length, 0);
 // The control set: finished, but no wine cask.
+// Every bottle with a known finish must have a wine verdict. A finish and
+// a null verdict was a 44-bottle gap the QA pass found.
+eq('no finish is left unclassified', Object.values(data.catalog)
+  .filter(p => p.fin && p.wine === null).length, 0);
 const woodOnly = Object.values(data.catalog).filter(p => p.fin && p.wine === false);
-eq('seven wood-only products', woodOnly.length, 7);
+eq('thirteen wood-only products', woodOnly.length, 13);
+eq('wood-only means no wine in any component', woodOnly.every(p =>
+  p.fin.split('+').every(c => /Oak|Mizunara|Amburana/.test(c))), true);
+eq('ninety-seven wine-cask products',
+  Object.values(data.catalog).filter(p => p.wine === true).length, 97);
 const tripleOak = Object.values(data.catalog).find(p => /Triple Oak/.test(p.name));
 eq('triple oak is finished', tripleOak.fin, 'Hungarian Oak+Chinkapin Oak+French Oak');
 eq('triple oak has no wine', tripleOak.wine, false);
