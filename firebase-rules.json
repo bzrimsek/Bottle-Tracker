@@ -77,7 +77,7 @@
         },
         "shared": {
           ".read": "auth != null",
-          ".write": "false"
+          ".write": "auth != null && root.child('bz-apps/whisky/admins').child(auth.uid).exists()"
         },
         "view": {
           "$uid": {
@@ -97,6 +97,13 @@
             ".write": "auth != null && ($uid === auth.uid || root.child('bz-apps/whisky/admins').child(auth.uid).exists())",
             ".read": "auth != null && $uid === auth.uid",
             ".validate": "newData.hasChildren(['name','at','version'])"
+          }
+        },
+        "contrib": {
+          ".read": "auth != null && root.child('bz-apps/whisky/admins').child(auth.uid).exists()",
+          "$uid": {
+            ".write": "auth != null && ($uid === auth.uid || root.child('bz-apps/whisky/admins').child(auth.uid).exists())",
+            ".read": "auth != null && $uid === auth.uid"
           }
         },
         "$uid": {
