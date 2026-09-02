@@ -1527,6 +1527,101 @@ eq('it says access is not automatic', /until you say so/.test(txt), true);
 eq('an anonymous sender still reads', /^I would like to share/.test(L.inviteText('', 'x')), true);
 }
 
+
+sec('a shared catalogue never touches your own work');
+// The whole risk in a shared catalogue is that an update arrives and takes
+// somebody's own notes with it. The layering that prevents it already
+// existed; this pins it.
+const baseCat = {
+  a: { k: 'a', name: 'Alpha', proof: 90, tn: { nose: 'base note' } },
+  b: { k: 'b', name: 'Bravo', proof: 92 }
+};
+const myEdits = { a: { tn: { nose: 'MY note' }, proof: 91 } };
+const myCustom = { z: { k: 'z', name: 'Mine Alone', proof: 100 } };
+const merged = L.mergeCatalog(baseCat, myEdits, myCustom, {});
+eq('my edit beats the base', merged.a.tn.nose, 'MY note');
+eq('and my correction to a field survives', merged.a.proof, 91);
+eq('a bottle only I have survives', merged.z.name, 'Mine Alone');
+eq('the base still supplies what I have not touched', merged.b.name, 'Bravo');
+
+// Now a NEWER base arrives with a different note for the same bottle.
+const newerBase = {
+  a: { k: 'a', name: 'Alpha', proof: 90, tn: { nose: 'a newer base note' } },
+  b: { k: 'b', name: 'Bravo', proof: 92, tn: { nose: 'new for bravo' } },
+  c: { k: 'c', name: 'Charlie', proof: 94 }
+};
+const after = L.mergeCatalog(newerBase, myEdits, myCustom, {});
+// This is the case that matters: my own note must not be overwritten by a
+// catalogue update, however much better the new one looks.
+eq('an update does not overwrite my note', after.a.tn.nose, 'MY note');
+eq('nor my corrected proof', after.a.proof, 91);
+eq('but it does bring new notes where I had none', after.b.tn.nose, 'new for bravo');
+eq('and new bottles', after.c.name, 'Charlie');
+eq('and mine is still there', after.z.name, 'Mine Alone');
+// Something I deleted stays deleted through an update.
+eq('a deletion survives an update',
+  L.mergeCatalog(newerBase, {}, {}, { c: 1 }).c, undefined);
+
+
+sec('filling in a shelf');
+// MISSING is not ABSENT. A no-age-statement bourbon has no age and an
+// unfinished one has no finish, so asking for them is how a number gets
+// invented. Tasting notes are the reason to ask: every whisky has some.
+const enCat = {
+  bare:  { k: 'bare',  name: 'Bare One',  proof: 90 },
+  noted: { k: 'noted', name: 'Noted One', proof: 92,
+           tn: { nose: 'n', palate: 'p', finish: 'f', colour: 'c' } },
+  noCol: { k: 'noCol', name: 'No Colour', proof: 94,
+           tn: { nose: 'n', palate: 'p', finish: 'f' } }
+};
+const enBot = [{ id: 'e1', k: 'bare', status: 'open' },
+               { id: 'e2', k: 'noted', status: 'sealed' },
+               { id: 'e3', k: 'noCol', status: 'open' }];
+
+eq('a bottle with no notes is worth asking about', L.needsEnhancing(enCat.bare), true);
+eq('one with notes is not', L.needsEnhancing(enCat.noted), false);
+eq('nothing is not', L.needsEnhancing(null), false);
+
+const q = L.enhanceQueue(enCat, enBot);
+eq('only the bare one queues', q.map(p => p.k), ['bare']);
+// A bottle you no longer own is not worth paying a lookup for.
+eq('an unowned bottle is skipped',
+  L.enhanceQueue(enCat, [{ id: 'x', k: 'noted', status: 'open' }]).length, 0);
+
+sec('what a lookup is allowed to change');
+const found = { nose: 'new nose', palate: 'new palate', finish: 'new finish',
+                colour: 'amber', age: 12, msrp: 60, fin: 'Oloroso' };
+const takeBare = L.enhanceDiff(enCat.bare, found);
+eq('an empty bottle takes the notes', takeBare.tn.nose, 'new nose');
+eq('and the age', takeBare.age, 12);
+eq('and the price', takeBare.msrp, 60);
+// "finish" arriving beside nose and palate is the finish of the TASTE, not
+// a cask. Taking it as a cask would put "new finish" in the Finish field.
+eq('but not a cask, when finish came as part of a note set',
+  takeBare.fin, undefined);
+
+// Nothing already present is ever overwritten — but a blank field on the
+// same bottle is still worth filling, which is the point of asking.
+const takeNoted = L.enhanceDiff(enCat.noted, found);
+eq('an existing note is untouched', takeNoted.tn, undefined);
+eq('while a blank age is still taken', takeNoted.age, 12);
+eq('a bottle with everything gives nothing back',
+  L.enhanceDiff({ k: 'full', name: 'Full', proof: 90, age: 10, msrp: 50,
+    fin: 'Sherry', tn: { nose: 'n', palate: 'p', finish: 'f', colour: 'c' } },
+    found), null);
+// Except a note set missing only its colour, which is worth completing.
+const takeCol = L.enhanceDiff(enCat.noCol, found);
+eq('a missing colour is filled', takeCol.tn.colour, 'amber');
+eq('and the rest of the note is left alone', takeCol.tn.nose, 'n');
+
+// Junk is refused as it is everywhere else.
+eq('an impossible age is not taken',
+  (L.enhanceDiff(enCat.bare, { age: 900 }) || {}).age, undefined);
+eq('a year is not a cask',
+  (L.enhanceDiff(enCat.bare, { fin: '2021' }) || {}).fin, undefined);
+eq('a real cask is', L.enhanceDiff(enCat.bare, { fin: 'Oloroso' }).fin, 'Oloroso');
+eq('nothing found means nothing taken', L.enhanceDiff(enCat.bare, null), null);
+
 /* ---------------- overuse ---------------- */
 sec('overuse control');
 const flights = [
@@ -2559,6 +2654,43 @@ eq('a stored finish is checked',
 eq('no bottle on the shelf has a numeric finish',
   Object.values(data.catalog).filter(p => p.fin && !/[a-z]{3}/i.test(p.fin))
     .map(p => p.name), []);
+
+
+sec('every distillery sits on its own island');
+// Ireland in the world outline was an eight-point blob that did not reach
+// east of -6.20, so Dublin, Bushmills and Limavady were all drawn in the
+// sea. A pin in the water is the kind of thing that makes the whole map
+// look untrustworthy.
+function inRing(pt, ring) {
+  let ok = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > pt[1]) !== (yj > pt[1])
+        && pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi) ok = !ok;
+  }
+  return ok;
+}
+// Picked by its bounds rather than by a loose test that matched a bigger
+// shape overlapping the same water.
+const ireland = mapData.world.filter(r => Array.isArray(r) && r.length > 20)
+  .find(r => {
+    const lo = r.map(p => p[0]), la = r.map(p => p[1]);
+    return Math.min(...lo) > -11 && Math.max(...lo) < -5.2
+        && Math.min(...la) > 51.2 && Math.max(...la) < 55.6;
+  });
+eq('Ireland is drawn with more than a handful of points', !!ireland, true);
+eq('and enough of them to have a coast', ireland.length >= 40, true);
+
+const offshore = Object.entries(mapData.ieDistilleries)
+  .filter(([, c]) => !inRing(c, ireland)).map(([n]) => n);
+eq('no irish distillery is in the sea', offshore, []);
+// The bounds have to be right too, or a shape could contain every pin by
+// being far too big.
+const lons = ireland.map(p => p[0]), lats = ireland.map(p => p[1]);
+eq('it does not stretch past the Atlantic edge', Math.min(...lons) > -11, true);
+eq('nor past Malin Head', Math.max(...lats) < 55.6, true);
+eq('nor south of Mizen', Math.min(...lats) > 51.2, true);
+eq('nor east into Wales', Math.max(...lons) < -5.2, true);
 
 eq('56 US distilleries plotted', usPins.length, 56);
 eq('185 US bottles sit on a pin', usPins.reduce((n, p) => n + p.total, 0), 185);
