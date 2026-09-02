@@ -79,7 +79,8 @@ function doPost(e) {
  */
 function suggestBottles(req) {
   var shape = '{"bottles":[{"name":string,"distillery":string,"proof":number,'
-    + '"price_usd":number,"why":string}],"note":string}';
+    + '"price_usd":number,"why":string,"source":string,"confident":boolean}],'
+    + '"note":string}';
 
   var system = [
     'You name real, currently purchasable whisky bottles that satisfy a',
@@ -100,8 +101,17 @@ function suggestBottles(req) {
     '   specifically, not a general description of the whisky.',
     '5. price_usd is typical US retail. Use null if you do not know it',
     '   rather than guessing.',
+    '5b. EVERY bottle needs a source: the retailer, review or distillery',
+    '   page where you found it, as a domain. A bottle you cannot source',
+    '   is a bottle you are inventing, and it will be dropped.',
+    '5c. Do not assemble a name from real parts. Old Forester 1920 is real;',
+    '   Old Forester 1920 Smoked Cinnamon Malt is not, and returning it is',
+    '   worse than returning nothing, because somebody will go looking.',
     '6. note is one line if there is something worth saying about the gap',
-    '   itself, otherwise an empty string.'
+    '   itself, otherwise an empty string.',
+    '7. confident is true ONLY if you saw this exact bottle named on a page',
+    '   you retrieved. If you are reasoning that it probably exists, it is',
+    '   false. Half the value here is knowing which is which.'
   ].join('\n');
 
   var owned = (req.owned || []).slice(0, 60).join('; ');

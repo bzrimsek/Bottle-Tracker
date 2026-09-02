@@ -85,6 +85,20 @@
             ".write": "auth != null && $uid === auth.uid"
           }
         },
+        "admins": {
+          ".read": "auth != null",
+          "$uid": {
+            ".write": "false"
+          }
+        },
+        "stats": {
+          ".read": "auth != null && root.child('bz-apps/whisky/admins').child(auth.uid).exists()",
+          "$uid": {
+            ".write": "auth != null && ($uid === auth.uid || root.child('bz-apps/whisky/admins').child(auth.uid).exists())",
+            ".read": "auth != null && $uid === auth.uid",
+            ".validate": "newData.hasChildren(['name','at','version'])"
+          }
+        },
         "$uid": {
           ".read": "auth != null && $uid === auth.uid",
           ".write": "auth != null && $uid === auth.uid"
