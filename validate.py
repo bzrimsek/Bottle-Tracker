@@ -47,8 +47,15 @@ def add(sev, prod, msg):
 
 
 def age_in_name(name):
-    """Age a label states, or None. Ignores batch and release numbers."""
-    masked = re.sub(r'\b(batch|pact|chapter|build|no\.?)\s*\d+', ' ', name, flags=re.I)
+    """Age a label states, or None. Ignores batch and release numbers.
+
+    The batch mask must not swallow the age. "Batch 7 Year Old" is a batch
+    word followed immediately by the age, and stripping "Batch 7" left
+    " Year Old" with nothing to capture -- which is how Booker's Beam House
+    Batch, a 7 year old that says so in its own name, passed every check.
+    """
+    masked = re.sub(r'\b(batch|pact|chapter|build|no\.?)\s*\d+'
+                    r'(?!\s*(?:yr|yrs|year|years|yo)\b)', ' ', name, flags=re.I)
     masked = re.sub(r'\b\d+\s*(proof|wood)\b', ' ', masked, flags=re.I)
     m = re.search(r'\b(\d{1,2})\s*(?:yr|yrs|year|years|yo)\b', masked, re.I)
     if m:
@@ -177,9 +184,56 @@ def check(cat, bottles, flights):
         for p in f.get('core', []):
             if p.get('k') and p['k'] not in keys:
                 add('ERROR', f['title'], 'core pour %s is not in the catalog' % p['k'])
-        n_core = len(f.get('core', []))
+        core = f.get('core', [])
+        n_core = len(core)
         if n_core < 4 or n_core > 9:
             add('WARN', f['title'], '%d core pours' % n_core)
+        # A pour can be a bottle, a wish, or a blend of bottles you own.
+        # Only the first needs to exist in the catalog.
+        for p in core:
+            kind = p.get('kind', 'shelf')
+            if kind == 'blend':
+                for part in p.get('parts', []):
+                    if part not in keys:
+                        add('ERROR', f['title'],
+                            'blend part %s is not in the catalog' % part)
+                if not p.get('parts'):
+                    add('ERROR', f['title'], 'blend with no parts')
+            elif kind == 'wish':
+                if not p.get('name'):
+                    add('ERROR', f['title'], 'wish pour with no name')
+
+
+def check_firebase_keys(d, add):
+    """No key anywhere may contain . # $ [ ] or /
+
+    Firebase Realtime forbids those in a key, and the catalogue is now
+    stored there. The provenance map used "tn.nose" as a key and made the
+    whole 354 KB import fail on a rule nothing local would ever have
+    enforced.
+    """
+    bad = []
+
+    def walk(o, path):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if re.search(r'[.#$\[\]/]', str(k)):
+                    bad.append(path + '/' + str(k))
+                walk(v, path + '/' + str(k))
+        elif isinstance(o, list):
+            for i, v in enumerate(o):
+                walk(v, path + '/' + str(i))
+
+    # Check what is actually STORED, which is a list of products, not the
+    # name-keyed map the app uses locally. Product names contain full stops
+    # — E.H. Taylor, J. Mattingly — and as list entries that is fine; only
+    # keys inside each product matter.
+    walk(list(d.get('catalog', {}).values()), 'products')
+    walk(d.get('flights', []), 'flights')
+    for b in bad[:5]:
+        add('ERROR', b.split('/')[-1], 'key is illegal in Firebase')
+    if len(bad) > 5:
+        add('ERROR', '', '%d more keys illegal in Firebase' % (len(bad) - 5))
 
 
 def main():
@@ -189,6 +243,7 @@ def main():
         os.path.dirname(os.path.abspath(__file__)), 'data.json')
     d = json.load(open(path, encoding='utf-8'))
     check(d['catalog'], d['bottles'], d.get('flights', []))
+    check_firebase_keys(d, add)
 
     counts = Counter(s for s, _, _ in findings)
     print('\nData QA: %s' % path)
