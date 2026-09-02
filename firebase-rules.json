@@ -77,6 +77,18 @@
         },
         "shared": {
           ".read": "auth != null",
+          "stamp": {
+            ".write": "auth != null"
+          },
+          "catalog": {
+            "products": {
+              "$key": {
+                ".write": "auth != null && (!data.exists() || root.child('bz-apps/whisky/admins').child(auth.uid).exists())",
+                ".validate": "newData.hasChildren(['name']) || !newData.exists()"
+              }
+            },
+            ".write": "auth != null && root.child('bz-apps/whisky/admins').child(auth.uid).exists()"
+          },
           ".write": "auth != null && root.child('bz-apps/whisky/admins').child(auth.uid).exists()"
         },
         "view": {
