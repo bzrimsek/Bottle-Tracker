@@ -2506,7 +2506,7 @@ eq('nothing from the first run is reused', recast.fresh, recast.pours.length);
 
 // Tasting notes across the real shelf, and where each set came from.
 const withTn = Object.values(data.catalog).filter(p => p.tn);
-eq('302 products carry tasting notes', withTn.length, 302);
+eq('310 products carry tasting notes', withTn.length, 310);
 eq('every note set has at least three columns',
   withTn.every(p => L.tastingNotes(p).length >= 3), true);
 // Twelve are now sourced from WHISKY:EDITION rather than written by me for
@@ -2517,7 +2517,7 @@ eq('every note set has at least three columns',
 const sourced = Object.values(data.catalog).filter(p => p.tnSrc === 'review');
 const modelRead = Object.values(data.catalog).filter(p => p.tnSrc === 'model');
 eq('twelve note sets are sourced', sourced.length, 12);
-eq('105 were read by the model', modelRead.length, 105);
+eq('113 were read by the model', modelRead.length, 113);
 eq('a sourced note is never also credited to a card',
   sourced.filter(p => p.tnFrom).length, 0);
 eq('nor is a model-read one', modelRead.filter(p => p.tnFrom).length, 0);
