@@ -1518,13 +1518,13 @@ eq('a short id is not a uid', L.buddyFromUrl('https://x/#buddy=ab'), null);
 eq('no uid, no link', L.buddyLink('https://x/', ''), null);
 
 const txt = L.inviteText('BZ', 'https://x/#buddy=abc123XYZ');
-eq('it says who sent it', /^BZ wants/.test(txt), true);
+eq('it says who sent it', /^BZ would like to share/.test(txt), true);
 eq('it carries the link', txt.indexOf('https://x/#buddy=abc123XYZ') > 0, true);
 // The reader may never have heard of any of this, so the message has to
 // stand alone — and has to say what the link does NOT do.
 eq('it explains what the app is', /Bottle Tracker/.test(txt), true);
 eq('it says access is not automatic', /until you say so/.test(txt), true);
-eq('an anonymous sender still reads', /^I want/.test(L.inviteText('', 'x')), true);
+eq('an anonymous sender still reads', /^I would like to share/.test(L.inviteText('', 'x')), true);
 }
 
 /* ---------------- overuse ---------------- */
@@ -2506,15 +2506,28 @@ eq('nothing from the first run is reused', recast.fresh, recast.pours.length);
 
 // Tasting notes across the real shelf, and where each set came from.
 const withTn = Object.values(data.catalog).filter(p => p.tn);
-eq('197 products carry tasting notes', withTn.length, 197);
+eq('302 products carry tasting notes', withTn.length, 302);
 eq('every note set has at least three columns',
   withTn.every(p => L.tastingNotes(p).length >= 3), true);
 // Twelve are now sourced from WHISKY:EDITION rather than written by me for
 // a flight card. The two must never be confusable.
+// Three origins, and they must stay distinguishable: a prompt I wrote for
+// a flight card, a producer's own sheet, and the model reading what is
+// published. They are worth different amounts.
 const sourced = Object.values(data.catalog).filter(p => p.tnSrc === 'review');
+const modelRead = Object.values(data.catalog).filter(p => p.tnSrc === 'model');
 eq('twelve note sets are sourced', sourced.length, 12);
+eq('105 were read by the model', modelRead.length, 105);
 eq('a sourced note is never also credited to a card',
   sourced.filter(p => p.tnFrom).length, 0);
+eq('nor is a model-read one', modelRead.filter(p => p.tnFrom).length, 0);
+// Citation markup leaked into 28 of them and had to be stripped. None must
+// survive: it renders as literal angle brackets on a tasting card.
+eq('no note carries citation markup',
+  withTn.filter(p => /<\/?cite/i.test(JSON.stringify(p.tn))).map(p => p.name), []);
+eq('no note is empty after cleaning',
+  withTn.filter(p => Object.values(p.tn).some(v => !String(v).trim()))
+    .map(p => p.name), []);
 eq('every note set records its origin one way or the other',
   withTn.every(p => !!p.tnFrom || !!p.tnSrc), true);
 eq('notes always come back in sheet order',
