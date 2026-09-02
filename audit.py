@@ -58,6 +58,34 @@ def run_audit(html_path):
     if r.returncode != 0:
         fail('JS syntax error:\n' + r.stderr[:400])
     else:
+        # node --check only PARSES. `FBLOG = []` with no declaration parses
+        # perfectly and throws ReferenceError at load under strict mode,
+        # which blanked the app and shipped past a green audit.
+        #
+        # Executing the file would catch it, but not without a real DOM:
+        # the app wires its handlers before that line is reached and dies on
+        # a null element first. So check the thing itself — a top-level
+        # assignment to a name that is never declared anywhere in the file.
+        js = '\n'.join(blocks)
+        declared = set(re.findall(
+            r'(?:^|[\s;{(])(?:var|let|const|function|class)\s+([A-Za-z_$][\w$]*)', js))
+        declared |= set(re.findall(r'function\s+([A-Za-z_$][\w$]*)', js))
+        # Parameters and loop variables too, so a match is a real finding.
+        declared |= set(re.findall(r'([A-Za-z_$][\w$]*)\s*(?:,\s*[\w$]+\s*)*=>', js))
+        declared |= set(re.findall(r'\(([^)]{0,120})\)\s*(?:=>|{)', js) and [] or [])
+        undeclared = []
+        for m in re.finditer(r'^([A-Za-z_$][\w$]*)\s*=(?!=)', js, re.M):
+            name = m.group(1)
+            if name in declared:
+                continue
+            if name in ('module', 'exports', 'globalThis'):
+                continue
+            undeclared.append(name)
+        if undeclared:
+            fail('assigned without declaring (throws under strict mode): '
+                 + ', '.join(sorted(set(undeclared))[:5]))
+        else:
+            ok('no undeclared assignments')
         ok('JS syntax valid')
 
     # ── 2. APP_VERSION ────────────────────────────────────────────
@@ -195,7 +223,10 @@ def run_audit(html_path):
         ('mask-image:linear-gradient(to bottom', 'the scroll edge does not fade'),
         # The nav is above the overlay by rule 19, so a bottom-anchored
         # modal must pad for it or its last buttons sit behind the bar.
-        ('padding:16px 15px calc(var(--nav-h)', 'the modal does not clear the nav'),
+        # The modal used to clear the nav with bottom padding; it is centred
+        # now and clears it with a margin instead. Check the PROPERTY — that
+        # it accounts for the bar at all — rather than one way of doing it.
+        ('margin-bottom:var(--nav-h)', 'the modal does not clear the nav'),
     ]
     bad = [why for needle, why in layout if needle not in css]
     if 'position:fixed;left:0;right:0;bottom:0' in css:
