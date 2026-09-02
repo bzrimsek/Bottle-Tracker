@@ -1622,6 +1622,62 @@ eq('a year is not a cask',
 eq('a real cask is', L.enhanceDiff(enCat.bare, { fin: 'Oloroso' }).fin, 'Oloroso');
 eq('nothing found means nothing taken', L.enhanceDiff(enCat.bare, null), null);
 
+{
+sec('tasting papers');
+const pCat = {
+  a: { k: 'a', name: 'Sazerac Rye', dist: 'Buffalo Trace', sub: 'rye',
+       proof: 90, fin: 'New oak',
+       tn: { colour: 'Amber', nose: 'Anise', palate: 'Sweet', finish: 'Short' } },
+  b: { k: 'b', name: 'Rittenhouse Rye', dist: 'Heaven Hill', sub: 'rye',
+       proof: 100, tn: { colour: 'Amber', nose: 'Cinnamon', palate: 'Round',
+       finish: 'Gentle' } }
+};
+const pFlight = {
+  title: 'A RYE FLIGHT',
+  tag: '6 core + 4 extensions \u00b7 ALL BLIND \u00b7 ONE VARIABLE: PROOF',
+  premise: 'Sazerac at 90 and Rittenhouse at 100, poured together.',
+  core: [{ k: 'a', letter: 'A' }, { k: 'b', letter: 'B' }],
+  why: ['The ask is preference, not power.'],
+  cards: [{ letter: 'A', wood: 'FAMILY ONE' }, { letter: 'B', wood: 'THE RINGER' }]
+};
+
+const host = L.hostCard(pFlight, pCat);
+eq('the host card names every bottle',
+  host.pours.map(p => p.bottle), ['Sazerac Rye', 'Rittenhouse Rye']);
+eq('with proofs', host.pours.map(p => p.proof), [90, 100]);
+eq('and the notes as prompts', host.pours[0].nose, 'Anise');
+eq('and the reasoning', host.why.length, 1);
+
+sec('the sheet must give nothing away');
+const sheet = L.participantCard(pFlight, pCat);
+eq('letters only', sheet.rows.map(r => r.letter), ['A', 'B']);
+// The premise names the bottles: it is the HOST's reasoning, and putting it
+// on a blind sheet hands the night away. The leak check caught exactly this.
+eq('the premise never reaches the sheet',
+  JSON.stringify(sheet).indexOf('Sazerac'), -1);
+eq('the theme is built from the flight shape instead',
+  sheet.theme, '2 pours, all Rye. Guess the strength of each.');
+eq('no leak', L.sheetLeaks(sheet, pFlight, pCat), []);
+// The check has to work, or it is worse than nothing.
+const leaky = L.participantCard(pFlight, pCat);
+leaky.theme += ' featuring Rittenhouse';
+eq('a planted name is caught',
+  L.sheetLeaks(leaky, pFlight, pCat), ['rittenhouse']);
+// A house named in the TITLE is the flight's own given, not a leak.
+const abFlight = { title: 'THE ABERLOUR HOUSE', core: [{ k: 'x' }] };
+const abCat = { x: { k: 'x', name: 'Aberlour 12', dist: 'Aberlour', sub: 'scotch' } };
+eq('a titled house is not a leak',
+  L.sheetLeaks(L.participantCard(abFlight, abCat), abFlight, abCat), []);
+
+sec('the columns follow the question');
+eq('a proof flight asks for a proof',
+  L.sheetColumns({ tag: 'ONE VARIABLE: PROOF' })[0][0], 'Proof \u2014 your number');
+eq('a cask flight asks which cask',
+  L.sheetColumns({ tag: 'ONE VARIABLE: WHICH SHERRY' })[0][0], 'Which cask');
+eq('and the second column never changes',
+  L.sheetColumns({ tag: '' })[1][0], 'Rather drink it? 1\u20135');
+}
+
 /* ---------------- overuse ---------------- */
 sec('overuse control');
 const flights = [
