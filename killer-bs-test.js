@@ -1678,6 +1678,194 @@ eq('and the second column never changes',
   L.sheetColumns({ tag: '' })[1][0], 'Rather drink it? 1\u20135');
 }
 
+{
+sec('what a shelf can teach');
+// The 36 flights encode which questions are worth asking and what has to be
+// held still for each. A newcomer with forty bottles has no way to know
+// that, and this is that knowledge pointed at whatever shelf is present.
+eq('every lesson states its question', L.LESSONS.every(l => !!l.ask), true);
+eq('and what it holds still', L.LESSONS.every(l => (l.hold || []).length), true);
+// The variables the shipped flights actually vary must all be covered, or
+// the mining lost something.
+eq('the mined variables are all represented',
+  ['proof', 'finish', 'house', 'region', 'age', 'grain', 'price']
+    .filter(v => !L.LESSONS.some(l => l.id === v)), []);
+
+// A shelf of four bourbons from one house at four strengths can teach proof
+// and nothing else, and must say so rather than offering everything.
+const ladder = {};
+const ladderBot = [];
+[90, 100, 110, 120].forEach((p, i) => {
+  ladder['p' + i] = { k: 'p' + i, name: 'Bourbon ' + i, sub: 'bourbon',
+    dist: 'One House', proof: p, obsc: 'known', msrp: 50 };
+  ladderBot.push({ id: 'lb' + i, k: 'p' + i, status: 'open' });
+});
+const taught = L.lessonsFor(ladder, ladderBot, []);
+eq('proof is buildable', taught.find(l => l.id === 'proof').ready, true);
+// Nothing varies the cask, so that lesson is not offered.
+eq('the cask is not', taught.find(l => l.id === 'finish').ready, false);
+eq('ready lessons come first',
+  taught.findIndex(l => !l.ready) > taught.findIndex(l => l.ready), true);
+
+// A blocker has to name the missing SHAPE. "Not enough bottles" tells
+// nobody what to buy.
+const blocked = taught.find(l => !l.ready);
+eq('a blocker explains itself', !!blocked.blocked, true);
+eq('and names a number or a shape',
+  /\d|category|distillery|region/.test(blocked.blocked), true);
+// A nearly-empty shelf says the obvious thing rather than something clever.
+eq('two bottles cannot teach anything',
+  L.lessonsFor({ a: { k: 'a', sub: 'bourbon', proof: 90 } },
+    [{ id: 'x', k: 'a', status: 'open' }], []).every(l => !l.ready), true);
+eq('and says why',
+  /Fewer than four/.test(L.lessonsFor({ a: { k: 'a', sub: 'bourbon', proof: 90 } },
+    [{ id: 'x', k: 'a', status: 'open' }], [])[0].blocked), true);
+
+// Lessons already built are marked, so a shelf with 36 flights does not
+// keep offering the same ones first.
+const withFlights = L.lessonsFor(ladder, ladderBot,
+  [{ title: 'X', tag: 'ONE VARIABLE: PROOF', core: [] }]);
+eq('an already-built lesson is counted',
+  withFlights.find(l => l.id === 'proof').have, 1);
+}
+
+{
+sec('pooling the room');
+const mineCat = {
+  m0: { k: 'm0', name: 'Mine A', sub: 'bourbon', dist: 'H1', proof: 90,
+        obsc: 'known', msrp: 40 },
+  m1: { k: 'm1', name: 'Mine B', sub: 'bourbon', dist: 'H1', proof: 100,
+        obsc: 'known', msrp: 45 }
+};
+const mineBot = ['m0', 'm1'].map((k, i) => ({ id: 'mb' + i, k, status: 'open' }));
+const yoursCat = {
+  y0: { k: 'y0', name: 'Yours A', sub: 'bourbon', dist: 'H1', proof: 110,
+        obsc: 'known', msrp: 50 },
+  y1: { k: 'y1', name: 'Yours B', sub: 'bourbon', dist: 'H1', proof: 120,
+        obsc: 'known', msrp: 55 },
+  y2: { k: 'y2', name: 'Mine A', sub: 'bourbon', dist: 'H1', proof: 90,
+        obsc: 'known', msrp: 40 }
+};
+const yoursBot = ['y0', 'y1', 'y2'].map((k, i) => ({ id: 'yb' + i, k, status: 'sealed' }));
+yoursBot[0].status = 'open'; yoursBot[1].status = 'open'; yoursBot[2].status = 'open';
+
+const pool = L.poolShelves({ catalog: mineCat, bottles: mineBot },
+  { u1: { catalog: yoursCat, bottles: yoursBot } }, { u1: 'Marcus' }, 'You');
+eq('both shelves are in the pool', Object.keys(pool.catalog).length, 4);
+// A bottle both of you have is one pour, not two, and the host pours it.
+eq('a shared bottle is not duplicated',
+  Object.keys(pool.catalog).filter(k => k === L.shopNorm('Mine A')).length, 1);
+eq('and the host owns it', pool.owner[L.shopNorm('Mine A')][0], 'You');
+eq('but the other owner is remembered',
+  pool.owner[L.shopNorm('Mine A')].indexOf('Marcus') > 0, true);
+
+// A sealed bottle is not in the room, wherever it lives.
+const sealedOnly = { catalog: { s: { k: 's', name: 'Sealed', sub: 'rye', proof: 90 } },
+                     bottles: [{ id: 'sx', k: 's', status: 'sealed' }] };
+eq('sealed bottles do not join the pool',
+  Object.keys(L.poolShelves(sealedOnly, {}, {}, 'You').catalog).length, 0);
+
+sec('who brings what');
+const pours = [{ k: L.shopNorm('Mine A') }, { k: L.shopNorm('Yours A') },
+               { k: L.shopNorm('Yours B') }];
+const plan = L.poolPlan(pours, pool, 'You');
+eq('one is yours', plan.mine, 1);
+eq('two are borrowed', plan.borrowed, 2);
+eq('and it says who', plan.people, ['Marcus']);
+eq('in a sentence a host can act on', plan.summary, 'Marcus brings 2.');
+// A flight you can pour alone should say so rather than listing yourself.
+eq('nothing borrowed reads plainly',
+  L.poolPlan([{ k: L.shopNorm('Mine A') }], pool, 'You').summary,
+  'You can pour all of this yourself.');
+
+sec('what pooling is worth');
+// Two bottles cannot build a proof ladder; four can. That is the case this
+// whole feature exists for.
+const gain = L.poolGain({ catalog: mineCat, bottles: mineBot }, pool, []);
+eq('a lesson you could not build alone is flagged new',
+  gain.some(g => g.id === 'proof' && g.gain === 'new'), true);
+eq('and says so plainly',
+  /cannot build this on your own/.test(
+    gain.find(g => g.id === 'proof').note), true);
+// Pooling with somebody who adds nothing must report nothing rather than
+// inventing a benefit.
+eq('an empty buddy adds nothing',
+  L.poolGain({ catalog: mineCat, bottles: mineBot },
+    L.poolShelves({ catalog: mineCat, bottles: mineBot }, {}, {}, 'You'),
+    []).length, 0);
+}
+
+{
+sec('what a buddy can see');
+// Letting somebody see your shelf used to hand them the whole node: every
+// pour with its date, the wishlist, the lookup endpoint. "See my shelf"
+// means the bottles.
+const before = ['bottles', 'history', 'edits', 'custom', 'deleted',
+                'customFlights', 'wish', 'displayName', 'findable',
+                'deadGaps', 'lookupUrl'];
+const shared = ['name', 'at', 'bottles', 'edits', 'custom', 'deleted'];
+eq('a pour history is not shared', shared.indexOf('history'), -1);
+eq('nor a wishlist', shared.indexOf('wish'), -1);
+eq('nor the lookup endpoint', shared.indexOf('lookupUrl'), -1);
+eq('nor your flights', shared.indexOf('customFlights'), -1);
+// The corrections travel, because a buddy seeing your shelf should see your
+// proof fix rather than the base value you disagreed with.
+eq('your corrections do', shared.indexOf('edits') >= 0, true);
+eq('and bottles, obviously', shared.indexOf('bottles') >= 0, true);
+// Written as a whitelist, so anything added to the app later is private
+// until somebody puts it in on purpose.
+eq('the shared set is smaller than the stored set',
+  shared.length < before.length, true);
+}
+
+{
+sec('a flight proposed to the room');
+const rmPool = {
+  catalog: { a: { k: 'a', name: 'Mine A', proof: 90 },
+             b: { k: 'b', name: 'Theirs B', proof: 100 },
+             c: { k: 'c', name: 'Theirs C', proof: 110 } },
+  bottles: [{ id: '1', k: 'a', status: 'open' },
+            { id: '2', k: 'b', status: 'open' },
+            { id: '3', k: 'c', status: 'open' }],
+  owner: { a: ['You'], b: ['Marcus'], c: ['Marcus', 'You'] }
+};
+const prop = L.makeProposal(
+  { title: 'AN EVENING', premise: 'Because.', variable: 'proof' },
+  [{ k: 'a' }, { k: 'b' }, { k: 'c' }], rmPool, 'You', 'uid-me');
+
+eq('it is lettered', prop.pours.map(p => p.letter), ['A', 'B', 'C']);
+// Names, not keys: a key only means something against the catalogue the
+// sender happened to have.
+eq('pours travel as names',
+  prop.pours.map(p => p.name), ['Mine A', 'Theirs B', 'Theirs C']);
+eq('and say who brings each',
+  prop.pours.map(p => p.from), ['You', 'Marcus', 'You']);
+// A bottle you BOTH have is brought by whoever is hosting, not negotiated.
+eq('a bottle both own is brought by you', prop.pours[2].from, 'You');
+eq('it records who proposed it', prop.by, 'uid-me');
+eq('and summarises the ask', prop.summary, 'Marcus brings 1.');
+
+sec('what a proposal asks of the reader');
+// Worked out against the READER's shelf, since that is the question the
+// reader actually has.
+const myCat = { x: { k: 'x', name: 'Mine A', proof: 90 } };
+const myBot = [{ id: 'm', k: 'x', status: 'open' }];
+const asks = L.proposalAsks(prop, myCat, myBot, 'Marcus');
+eq('it counts what you already have open', asks.haveOpen, 1);
+eq('out of the whole flight', asks.total, 3);
+eq('and says so plainly', asks.note, 'You have 1 of 3 open.');
+// Somebody who has everything gets a different sentence, not the same one
+// with different numbers.
+const allCat = {};
+prop.pours.forEach((p, i) => { allCat['k' + i] = { k: 'k' + i, name: p.name }; });
+const allBot = prop.pours.map((p, i) => ({ id: 'a' + i, k: 'k' + i, status: 'open' }));
+eq('having everything reads differently',
+  L.proposalAsks(prop, allCat, allBot, 'You').note,
+  'You have all of these open.');
+eq('and it knows what YOU are bringing',
+  L.proposalAsks(prop, myCat, myBot, 'Marcus').bringing, 1);
+}
+
 /* ---------------- overuse ---------------- */
 sec('overuse control');
 const flights = [

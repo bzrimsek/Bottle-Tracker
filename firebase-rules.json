@@ -75,8 +75,18 @@
             }
           }
         },
+        "shared": {
+          ".read": "auth != null",
+          ".write": "false"
+        },
+        "view": {
+          "$uid": {
+            ".read": "auth != null && ($uid === auth.uid || root.child('bz-apps/whisky/shares').child($uid).child(auth.uid).exists())",
+            ".write": "auth != null && $uid === auth.uid"
+          }
+        },
         "$uid": {
-          ".read": "auth != null && ($uid === auth.uid || root.child('bz-apps/whisky/shares').child($uid).child(auth.uid).exists())",
+          ".read": "auth != null && $uid === auth.uid",
           ".write": "auth != null && $uid === auth.uid"
         }
       }
