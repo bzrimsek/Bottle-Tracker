@@ -5289,5 +5289,89 @@ sec('§203 a push carries only what changed');
   eq('and a landed push clears it', L.changedKeys(KEYS, S_, pushed), []);
 }
 
+/* §204  a key Firebase will accept, and a payload it will take ---------
+ *
+ * From BZ's Diagnostics, once the SDK was fetched with crossorigin and the
+ * errors stopped arriving as the bare string "Script error.":
+ *
+ *   set failed: value argument contains an invalid key
+ *   (Elmer T. Lee Single Barrel Bourbon) in property '...edits'
+ *
+ *   update failed: values argument contains undefined in property
+ *   'history.8.pours.5'
+ *
+ * This is the root of the whole week. Firebase refuses a key holding
+ * . # $ / [ or ], and this app keys edits, custom, deleted, favs and
+ * deadGaps by the PRODUCT NAME — 18 of the 325 shipped keys hold one of
+ * those characters. Every push carrying one was refused whole, the account
+ * stayed behind, and a later load handed the older copy back. That is how a
+ * bought bottle and a flight pour disappeared while the library kept the
+ * whisky.
+ *
+ * Escaped up, restored down. The escape character is escaped FIRST, or a
+ * name holding a tilde would not survive the round trip.
+ */
+sec('§204 keys Firebase will take, and what comes back');
+{
+  eq('the bottle that reported it',
+    L.fbKey('Elmer T. Lee Single Barrel Bourbon'),
+    'Elmer T~d Lee Single Barrel Bourbon');
+  eq('and back again',
+    L.unFbKey(L.fbKey('Elmer T. Lee Single Barrel Bourbon')),
+    'Elmer T. Lee Single Barrel Bourbon');
+
+  // Every character the database refuses, and the escape itself.
+  [['A#1', 'A~h1'], ['$100 Bottle', '~s100 Bottle'], ['a/b', 'a~fb'],
+   ['x[1]', 'x~o1~c'], ['tilde~name', 'tilde~tname']].forEach(([raw, safe]) => {
+    eq(JSON.stringify(raw) + ' is escaped', L.fbKey(raw), safe);
+    eq('and restored', L.unFbKey(safe), raw);
+  });
+
+  eq('a name with nothing to escape is left alone',
+    L.fbKey('Ardbeg 10'), 'Ardbeg 10');
+  eq("and an apostrophe is not a problem for it",
+    L.fbKey("Angel's Envy"), "Angel's Envy");
+
+  /* The pairing that matters: escape, then restore, and the map is the map
+     it started as. A one-way transform here would rename 18 whiskies on
+     every device that read them. */
+  const edits = { 'Elmer T. Lee Single Barrel Bourbon': { proof: 90 },
+                  'Ardbeg 10': { proof: 92 } };
+  eq('a map of edits survives the round trip',
+    L.fbDecode(L.fbEncode(edits)), edits);
+  eq('and is genuinely different on the way up',
+    Object.keys(L.fbEncode(edits))[0], 'Elmer T~d Lee Single Barrel Bourbon');
+
+  // Nested, because custom holds products which hold their own fields.
+  const deep = { custom: { 'Elmer T. Lee': { name: 'Elmer T. Lee', src: {} } } };
+  eq('nested keys are escaped too',
+    Object.keys(L.fbEncode(deep).custom)[0], 'Elmer T~d Lee');
+  eq('and the value comes back whole', L.fbDecode(L.fbEncode(deep)), deep);
+
+  /* The other refusal: undefined. A wish pour has no k, and mapping the
+     cast straight to x.k put undefined at history.8.pours.5. */
+  eq('undefined is dropped from an object',
+    L.fbEncode({ a: 1, b: undefined }), { a: 1 });
+  eq('and from an array', L.fbEncode({ p: [1, undefined, 3] }), { p: [1, 3] });
+  /* And null inside an array, because the bad record is already SAVED: an
+     undefined becomes null the moment localStorage round-trips it, and
+     Firebase reads a null inside a list as "delete this index". Without
+     this, the run already on BZ's device could never be written. */
+  eq('a stored null in a list is dropped too',
+    L.fbEncode({ pours: ['a', null, 'c'] }), { pours: ['a', 'c'] });
+  eq('the record from his device, after a reload',
+    L.fbEncode({ kind: 'flight', flight: 'PEAT IS A POSTCODE',
+                 pours: ['a', 'b', null, 'd'] }),
+    { kind: 'flight', flight: 'PEAT IS A POSTCODE', pours: ['a', 'b', 'd'] });
+  /* A null FIELD is a different thing and stays: several records use null
+     to mean "known to be nothing" — a bottle with no price paid. */
+  eq('a null field is not a null list entry',
+    L.fbEncode({ a: null }), { a: null });
+
+  // Arrays keep their shape; only object keys are touched.
+  eq('an array of records is untouched except for its keys',
+    L.fbEncode({ h: [{ 'a.b': 1 }] }), { h: [{ 'a~db': 1 }] });
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
