@@ -213,6 +213,17 @@ def run_audit(html_path):
     # MadGolf's structure: body is a fixed-height flex column, the active
     # screen scrolls inside it, the nav is the last item in the column.
     css = html.split('</style>')[0]
+
+    # A SECOND .screen.on rule is as dangerous as a missing one. The correct
+    # rule was present the whole time the nav was invisible on a phone — a
+    # duplicate later in the file won the cascade and did not carry flex:1,
+    # so the screen stopped filling the column and the bar went off the
+    # bottom. Checking that the good rule exists cannot catch that.
+    n_screen = css.count('.screen.on{display:block')
+    if n_screen != 1:
+        fail('.screen.on is defined %d times; a later one overrides the '
+             'layout rule and drops the nav' % n_screen)
+
     layout = [
         ('height:100dvh', 'body is not a fixed-height column'),
         ('.screen.on{display:block;flex:1', 'the active screen does not scroll'),
@@ -227,6 +238,18 @@ def run_audit(html_path):
         # now and clears it with a margin instead. Check the PROPERTY — that
         # it accounts for the bar at all — rather than one way of doing it.
         ('margin-bottom:var(--nav-h)', 'the modal does not clear the nav'),
+        # A row that overflows horizontally widens the page, and a page
+        # wider than the viewport pushes the nav bar off the bottom. That
+        # shipped once; the guard is one line and it cannot ship again.
+        # The page must not be able to grow wider than the screen, and the
+        # BODY must not scroll — the active screen is the only scroller.
+        # Both matter: a wide page pushed the nav off the bottom once, and
+        # overflow-x on body pushed it off again, because when one axis is
+        # not visible the other computes to auto and the body scrolls.
+        ('html,body{max-width:100%}',
+         'the page can be widened past the viewport'),
+        ('body{overflow:hidden}',
+         'the body can scroll, which takes the nav bar with it'),
     ]
     bad = [why for needle, why in layout if needle not in css]
     if 'position:fixed;left:0;right:0;bottom:0' in css:
