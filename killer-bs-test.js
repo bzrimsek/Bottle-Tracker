@@ -4463,5 +4463,45 @@ sec('§190 a correction reads as a change');
   eq('an empty diff describes nothing', L.describeCorrection({}), []);
 }
 
+/* §191  filling a blank is not correcting anybody -----------------------
+ *
+ * A publish batch of 30 was 30 rows reading "nothing to something": an age
+ * the library did not have, a cask it did not have, a note it did not
+ * have, all of it from the lookup the app itself just ran. There is no
+ * judgement to make about those, and thirty of them trains you to press
+ * the button without reading — which is the one thing the review screen
+ * exists to prevent. An overwrite is the opposite: something is there,
+ * somebody may have meant it, and it is about to be replaced.
+ */
+sec('§191 an addition is not an overwrite');
+{
+  const pend = [
+    { p: { name: 'A' }, diff: { age: { was: null, now: 5 } } },
+    { p: { name: 'B' }, diff: { fin: { was: 'Oloroso', now: 'PX' } } },
+    { p: { name: 'C' }, diff: { age: { was: null, now: 6 },
+                                fin: { was: '', now: 'Honey, oak' } } },
+    { p: { name: 'D' }, why: 'not in the library' },
+    { p: { name: 'E' }, diff: { proof: { was: 90, now: 100 },
+                                age: { was: null, now: 8 } } }
+  ];
+  const sp = L.pendingSplit(pend);
+  eq('a blank filled is an addition',
+    sp.adds.map(x => x.p.name), ['A', 'C', 'D']);
+  eq('a value replaced is a change',
+    sp.changes.map(x => x.p.name), ['B', 'E']);
+  // E is the case that decides the rule: one field is an overwrite and one
+  // is a fill. A row that overwrites anything is an overwrite.
+  eq('a row with one overwrite among fills is an overwrite',
+    sp.changes.some(x => x.p.name === 'E'), true);
+  // An empty string is a blank, not a value somebody chose.
+  eq('an empty string counts as blank',
+    sp.adds.some(x => x.p.name === 'C'), true);
+  eq('nothing is lost in the split',
+    sp.adds.length + sp.changes.length, pend.length);
+  eq('an empty batch splits into nothing',
+    [L.pendingSplit([]).adds.length, L.pendingSplit(null).changes.length],
+    [0, 0]);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
