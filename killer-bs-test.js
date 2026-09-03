@@ -4942,5 +4942,58 @@ sec('§198 a host line stays with its pour');
       cat)[0].proof, 89);
 }
 
+/* §199  a name somebody typed is cased like the shelf ------------------
+ *
+ * "heaven hill grain to glass wheated bourbon" went onto the shelf exactly
+ * as typed and sat in lower case among 344 title-cased neighbours. It read
+ * as correct on the bottle screen and wrong on the shelf for one reason:
+ * the headings are set in Cinzel, a capitals-only face, so every name looks
+ * capitalised there whatever case it holds. The list was the only screen
+ * telling the truth.
+ *
+ * Two traps in the fix, both found by running it over the real shelf before
+ * writing the assertions:
+ *   - cleanName is the DISPLAY-name rule and cuts at 24 characters. It
+ *     would have filed the bottle as "Heaven Hill Grain To Gla". The real
+ *     shelf holds a 101-character name.
+ *   - capitalising after every apostrophe turns Angel's Envy into Angel'S
+ *     Envy, and there are eleven of those on this shelf. Only a one-letter
+ *     prefix takes a capital.
+ */
+sec('§199 a typed name is cased like the shelf');
+{
+  eq('the bottle that started it',
+    L.typedName('heaven hill grain to glass wheated bourbon'),
+    'Heaven Hill Grain To Glass Wheated Bourbon');
+  eq('spacing collapses', L.typedName("  angel's   envy  "), "Angel's Envy");
+  eq('a possessive keeps its small s',
+    L.typedName("angel's envy single barrel"), "Angel's Envy Single Barrel");
+  eq('a one-letter prefix does not',
+    L.typedName("aberlour a'bunadh alba"), "Aberlour A'Bunadh Alba");
+  eq('and neither does the Irish one', L.titleCase("o'connell"), "O'Connell");
+  eq('a hyphen starts a word',
+    L.typedName('henry mckenna 10 year bottled-in-bond'),
+    'Henry Mckenna 10 Year Bottled-In-Bond');
+  eq('an interior capital is left alone', L.titleCase('McKenna'), 'McKenna');
+
+  /* NOT cleanName. The longest name on the shipped shelf is 101 characters;
+     the display-name rule would have cut it to 24. */
+  const long = 'heaven hill bottled in bond bourbon 7 year kentucky straight '
+             + 'bourbon whiskey';
+  eq('a long bottle name is not truncated',
+    L.typedName(long).length, long.length);
+  eq('and the display-name rule still cuts at its own limit',
+    L.cleanName(long).length, L.NAME_MAX);
+
+  // The back labels are printed on a button, never inside a sentence.
+  const src = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  const names = /const SCREEN_NAMES = \{([^}]+)\}/.exec(src);
+  eq('SCREEN_NAMES is still there', !!names, true);
+  const lower = (names ? names[1] : '').split(',')
+    .map(x => (x.split(':')[1] || '').trim().replace(/^'|'$/g, ''))
+    .filter(x => x && /^[a-z]/.test(x));
+  eq('no back label reads as a mid-sentence fragment', lower, []);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
