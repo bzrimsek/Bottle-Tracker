@@ -4678,5 +4678,93 @@ sec('§194 what one bottle is short of');
     cases.filter(p => L.needsEnhancing(p) && !L.bottleGaps(p).length), []);
 }
 
+/* §195  accepting has to finish the job --------------------------------
+ *
+ * Accepting an offer wrote the CONTRIBUTION into the library. The shelf it
+ * came from usually holds more — a price, a cask, a tasting note the offer
+ * never carried — so the thin version landed, correctionFor compared the
+ * shelf against it, found the extra fields, and queued the same bottle for
+ * publishing. Accept, then publish, for one bottle, twice, for ever.
+ */
+sec('§195 accepting publishes what is known');
+{
+  const offer = { name: 'Ardbeg Ardcore', proof: 100, sub: 'scotch' };
+  const mine = { name: 'Ardbeg Ardcore', proof: 100, sub: 'scotch',
+                 msrp: 69.99, fin: 'ex-bourbon', dist: 'Ardbeg',
+                 tn: { nose: 'a', palate: 'b' }, tnSrc: 'model' };
+  const full = L.enrichContribution(offer, mine);
+
+  eq('what the shelf knows travels with the offer',
+    [full.msrp, full.fin, full.dist], [69.99, 'ex-bourbon', 'Ardbeg']);
+  eq('including the tasting note', full.tn.nose, 'a');
+  eq('and where it came from', full.tnSrc, 'model');
+
+  // The offer is the thing being accepted, so a field it states stands.
+  eq('the offer wins any field it states',
+    L.enrichContribution({ name: 'X', proof: 90 }, { proof: 100 }).proof, 90);
+  // A flight-card note is a prompt, not a description. It must never reach
+  // the library — the same rule the fill-in run works to.
+  eq('a flight prompt does not travel',
+    L.enrichContribution({ name: 'X' },
+      { tn: { nose: 'p' }, tnFrom: 'A FLIGHT' }).tn, undefined);
+  eq('nothing local leaves the offer alone',
+    L.enrichContribution(offer, null), offer);
+  eq('and nothing at all does not throw',
+    L.enrichContribution(null, mine), null);
+
+  /* The point of the whole thing: after accepting, the bottle must not
+     still be pending. correctionFor is what queues it, so that is what
+     has to come back empty. */
+  eq('and nothing is left pending afterwards',
+    L.correctionFor(mine, full), null);
+  eq('where the thin version would have queued it straight back',
+    L.correctionFor(mine, offer) === null, false);
+}
+
+/* §196  a flight prompt must not reach the library ---------------------
+ *
+ * libraryEntry published any note carrying a nose and never looked at
+ * tnFrom. A note written onto a flight card is a prompt to read aloud
+ * beside five other pours — invented for that room, not a description of
+ * the whisky — and the published entry does not keep tnFrom, so once it is
+ * in the library nothing downstream can tell it from a real one.
+ *
+ * Every other path had already been taught this. This was the last one,
+ * and the only one that shares it with everybody.
+ */
+sec('§196 a flight prompt is not published');
+{
+  const prompt = { name: 'Weller Special Reserve', proof: 90,
+                   tnFrom: 'WHEAT, TURNED UP',
+                   tn: { nose: 'p', palate: 'q' } };
+  const real = { name: 'Ardbeg 10', proof: 92,
+                 tn: { nose: 'a', palate: 'b' }, tnSrc: 'model' };
+
+  eq('a prompt does not travel', L.libraryEntry(prompt).tn, undefined);
+  eq('but the rest of the entry does', L.libraryEntry(prompt).proof, 90);
+  eq('a real note does travel', L.libraryEntry(real).tn.nose, 'a');
+  eq('and says where it came from', L.libraryEntry(real).tnSrc, 'model');
+  eq('a bottle with no note publishes no note',
+    L.libraryEntry({ name: 'X', proof: 90 }).tn, undefined);
+
+  // Finding the ones that went out before the rule existed. The library
+  // cannot answer this alone — it does not keep tnFrom — but the shelf can.
+  {
+    const lib = {};
+    lib[L.libKey(prompt.name)] = { name: prompt.name, tn: { nose: 'p' } };
+    lib[L.libKey(real.name)] = { name: real.name, tn: { nose: 'a' } };
+    const found = L.promptNotesInLibrary({ a: prompt, b: real }, lib);
+    eq('the invented one is found', found.map(x => x.name),
+      ['Weller Special Reserve']);
+    eq('and by the key the library uses', found[0].key,
+      'weller_special_reserve');
+    eq('a prompt that never reached the library is not listed',
+      L.promptNotesInLibrary({ a: prompt }, {}), []);
+    eq('and an entry with no note is not listed',
+      L.promptNotesInLibrary({ a: prompt },
+        { weller_special_reserve: { name: prompt.name } }), []);
+  }
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
