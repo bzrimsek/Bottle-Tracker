@@ -5654,5 +5654,203 @@ sec('§209 the column headers sort the shelf');
     ['Ardbeg 10', 'Zed', 'Buffalo']);
 }
 
+/* §210  counting the shelf once instead of once per whisky ------------
+ *
+ * ownedCount walks every bottle to answer for ONE whisky, and the shelf
+ * asked it once per product: 325 against 344 is 111,800 comparisons for a
+ * single redraw, and renderShelf ran on every keystroke. About 4ms in node
+ * and roughly 65ms on BZ's phone — the whole of the delay he feels typing.
+ *
+ * The danger in replacing a function with a map is the two disagreeing
+ * about what counts, so that is what is asserted: the map must equal
+ * ownedCount for every product on the real shelf, including the rule that
+ * a bottle marked gone is not owned.
+ */
+sec('§210 one pass for what you own');
+{
+  const bottles = [
+    { id: 'B1', k: 'Ardbeg 10', status: 'open' },
+    { id: 'B2', k: 'Ardbeg 10', status: 'sealed' },
+    { id: 'B3', k: 'Weller 12', status: 'open' },
+    { id: 'B4', k: 'Old Elk', status: 'gone' }
+  ];
+  const counts = L.ownedCounts(bottles);
+
+  eq('two bottles of one whisky', counts['Ardbeg 10'], 2);
+  eq('a sealed one still counts', counts['Weller 12'], 1);
+  eq('a bottle drunk and retired does not', counts['Old Elk'], undefined);
+  eq('and neither does a whisky nobody owns', counts['Longrow 18'], undefined);
+
+  /* The pair. Whatever ownedCount says for a key, the map says the same —
+     or a row appears on the shelf that the counts do not know about. */
+  ['Ardbeg 10', 'Weller 12', 'Old Elk', 'Longrow 18'].forEach(k => {
+    eq('the map agrees with ownedCount for ' + k,
+      counts[k] || 0, L.ownedCount(k, bottles));
+  });
+
+  eq('an empty shelf counts nothing', L.ownedCounts([]), {});
+  eq('and so does no shelf at all', L.ownedCounts(undefined), {});
+
+  /* shelfFilter takes the map when it is given one and builds its own when
+     it is not, so a caller that forgets is slower and never wrong. */
+  const products = [{ k: 'Ardbeg 10', name: 'Ardbeg 10', sub: 'scotch' },
+                    { k: 'Old Elk', name: 'Old Elk', sub: 'rye' }];
+  eq('given the map, only what is owned survives',
+    L.shelfFilter(products, bottles, { status: 'all' }, counts)
+      .map(p => p.name), ['Ardbeg 10']);
+  eq('and without it, the same answer',
+    L.shelfFilter(products, bottles, { status: 'all' }).map(p => p.name),
+    ['Ardbeg 10']);
+  eq('a map that disagrees with the shelf is the map that is used',
+    L.shelfFilter(products, bottles, { status: 'all' },
+      { 'Old Elk': 1 }).map(p => p.name), ['Old Elk']);
+}
+
+/* §211  the three decisions that were made inside a drawing -----------
+ *
+ * Rule 30, applied to the three the backlog names. openSealed decided which
+ * bottle opens and what to warn about, publishBatch built the write, and
+ * pendingForLibrary walked the shelf against the library — all inside
+ * functions that also draw, so the harness could not reach any of it.
+ *
+ * This is the code that broke all week. Nothing about what they decide has
+ * changed; the deciding has moved out of the drawing so it can be asserted.
+ */
+sec('§211 deciding, apart from drawing');
+{
+  /* --- which sealed bottle opens, and what it warns about --- */
+  const bottles = [{ id: 'B1', k: 'A', status: 'open' },
+                   { id: 'B2', k: 'A', status: 'sealed' },
+                   { id: 'B3', k: 'A', status: 'sealed' }];
+
+  const dear = L.sealedPrompt('A', bottles, { name: 'A', msrp: 400 });
+  eq('there is something to open', dear.ok, true);
+  eq('the open one is not offered', dear.sealed.map(b => b.id), ['B2', 'B3']);
+  eq('and the first sealed one is the one that opens', dear.next.id, 'B2');
+  eq('a vault bottle says so', dear.dear, true);
+  eq('the whole warning, in one string', dear.note,
+    'You have 2 sealed. This is a Vault bottle. Opening it logs a pour, '
+    + 'because nobody opens one to look at it.');
+
+  // An everyday bottle, and only one of it: neither clause appears.
+  const plain = L.sealedPrompt('A', [{ id: 'B9', k: 'A', status: 'sealed' }],
+    { name: 'A', msrp: 40 });
+  eq('an everyday bottle is not called dear', plain.dear, false);
+  eq('and one sealed bottle is not counted at you', plain.note,
+    'Opening it logs a pour, because nobody opens one to look at it.');
+
+  eq('nothing sealed is refused, with the reason',
+    L.sealedPrompt('B', bottles, {}), { ok: false, why: 'Nothing sealed to open' });
+  eq('and a whisky with only an open bottle is the same answer',
+    L.sealedPrompt('A', [{ id: 'B1', k: 'A', status: 'open' }], {}).ok, false);
+
+  /* --- the write a publish makes --- */
+  const built = L.publishWrite([{ name: 'Elmer T. Lee', proof: 90 }], 1234);
+  eq('it names what it will publish', built.names, ['Elmer T. Lee']);
+  eq('under the library key, not the name',
+    Object.keys(built.updates).sort(),
+    ['catalog/products/elmer_t_lee', 'stamp']);
+  eq('stamped once, with the same clock as the entries',
+    built.updates.stamp, built.updates['catalog/products/elmer_t_lee'].at);
+  eq('a product with no usable name is skipped, not written',
+    L.publishWrite([{ name: '' }], 1).names, []);
+  eq('and an empty batch writes nothing but the stamp',
+    Object.keys(L.publishWrite([], 1).updates), ['stamp']);
+
+  /* --- what this shelf owes the library --- */
+  const catalog = {
+    // dist AND proof: worthContributing refuses a bottle with only a name
+    // and a strength, because that helps nobody find it.
+    'Ardbeg 10': { k: 'Ardbeg 10', name: 'Ardbeg 10', proof: 92,
+                   dist: 'Ardbeg', sub: 'scotch',
+                   tn: { nose: 'smoke' }, tnSrc: 'mine' },
+    'Weller 12': { k: 'Weller 12', name: 'Weller 12', proof: 90 }
+  };
+  const lib = { weller_12: { name: 'Weller 12', proof: 90 } };
+  const pend = L.pendingForLibrary(catalog, lib);
+  eq('a whisky the library has never seen is pending',
+    pend.map(x => x.p.name), ['Ardbeg 10']);
+  eq('and says why', pend[0].why, 'not in the library');
+  eq('a whisky the library already agrees with is not',
+    L.pendingForLibrary({ 'Weller 12': catalog['Weller 12'] }, lib), []);
+
+  /* The pairing that cost a day: publish it, then ask whether it is still
+     pending. If this comes back non-empty the button does nothing and the
+     count never moves — which is exactly what BZ saw at 49. */
+  const published = {};
+  L.pendingForLibrary(catalog, lib).forEach(x => {
+    published[L.libKey(x.p.name)] = L.libraryEntry(x.p);
+  });
+  eq('publishing what is pending leaves nothing pending',
+    L.pendingForLibrary(catalog, Object.assign({}, lib, published)), []);
+}
+
+/* §212  a map sends the entry that moved, not the map -----------------
+ *
+ * From BZ's log, after correcting one bottle:
+ *   fb push ok: 61290 bytes, edits
+ *
+ * Not a fault — edits is ONE Firebase child, so naming it in a write means
+ * rewriting all of it. Naming the entry instead sends the one that moved.
+ * It is the number that grows with the shelf, and it was the last of them.
+ *
+ * Two things here are easy to get wrong and both would be silent:
+ *   - a removed entry has to be written as null, which is how Firebase
+ *     deletes a child, and is the one place in this file where a null is
+ *     the point rather than the hazard;
+ *   - the delta's keys are PATHS, so they must NOT go through fbEncode,
+ *     which escapes every key it meets and would turn the slash into ~f
+ *     and write one child named "edits~fElmer T~d Lee".
+ */
+sec('§212 writing one entry of a map');
+{
+  const before = { 'Ardbeg 10': { proof: 92 }, 'Elmer T. Lee': { proof: 90 },
+                   'Weller 12': { proof: 90 } };
+  const prev = JSON.stringify(before);
+
+  // One corrected, one removed, one untouched.
+  const after = { 'Ardbeg 10': { proof: 92 }, 'Elmer T. Lee': { proof: 93 } };
+  const d = L.mapDelta('edits', after, prev);
+  eq('only what moved is named', Object.keys(d).sort(),
+    ['edits/Elmer T~d Lee', 'edits/Weller 12']);
+  eq('the correction carries its new value',
+    d['edits/Elmer T~d Lee'], { proof: 93 });
+  eq('and the removal is a null, which is how a child is deleted',
+    d['edits/Weller 12'], null);
+  eq('the untouched entry is not sent',
+    Object.keys(d).indexOf('edits/Ardbeg 10'), -1);
+
+  /* The path keys must survive as paths. Running the finished payload
+     through fbEncode would escape the slash and write a single child with
+     a slash in its name — the entry would never be touched, and nothing
+     would report a failure. */
+  eq('the child key inside the path is escaped',
+    Object.keys(d).indexOf('edits/Elmer T~d Lee') >= 0, true);
+  eq('but the path separator is NOT',
+    Object.keys(d).every(k => k.indexOf('~f') < 0), true);
+  eq('and fbEncode would break it, which is why it is not applied',
+    Object.keys(L.fbEncode(d))[0].indexOf('~f') >= 0, true);
+
+  // Nothing moved: an empty delta, which sends nothing at all.
+  eq('an unchanged map sends no entries',
+    L.mapDelta('edits', before, prev), {});
+
+  /* Only maps. bottles and history are ordered lists, and addressing a
+     list by index is how a concurrent write turns into a shuffled shelf. */
+  eq('a list is left whole', L.mapDelta('bottles', [1, 2], '[1]'), null);
+  eq('and so is history', L.mapDelta('history', [], '[]'), null);
+  eq('a key with no previous copy is sent whole',
+    L.mapDelta('edits', after, undefined), null);
+  eq('and so is one whose record is not a map',
+    L.mapDelta('edits', after, '"nonsense"'), null);
+  eq('a record that will not parse does not throw',
+    L.mapDelta('edits', after, '{oops'), null);
+
+  // Every map key named is one Firebase actually holds as a map.
+  eq('the map keys are all sync keys',
+    L.MAP_KEYS.filter(k => ['edits', 'custom', 'deleted', 'favs', 'deadGaps',
+      'upcs'].indexOf(k) < 0), []);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
