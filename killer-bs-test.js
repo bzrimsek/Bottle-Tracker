@@ -5373,5 +5373,61 @@ sec('§204 keys Firebase will take, and what comes back');
     L.fbEncode({ h: [{ 'a.b': 1 }] }), { h: [{ 'a~db': 1 }] });
 }
 
+/* §205  a load has to hand over what the account is missing -----------
+ *
+ * From BZ's log, twice in three seconds and then nothing:
+ *   sync: local 1788463342168 vs account 1788461466031 — local wins
+ * The account stamp is the SAME number it held an hour earlier. His device
+ * knew it was ahead, said so, and never sent anything.
+ *
+ * fbFirstLoad calls save_() to persist the merge, and save_ guards its push
+ * behind FB.loaded — which is set four lines LATER. So a load scheduled no
+ * push at all, and nothing reached the account until the next time he
+ * changed something. That push then carried the whole shelf, because
+ * nothing had been recorded as pushed yet, and timed out at 250KB. Every
+ * round of this made the next one identical.
+ *
+ * The load now pushes as soon as it completes, seeded from what it just
+ * read so it carries the difference and not the shelf.
+ */
+sec('§205 a load hands over what the account lacks');
+{
+  const KEYS = ['bottles', 'history', 'custom'];
+  const S_ = { bottles: [{ id: 'B1' }, { id: 'B2' }], history: [],
+               custom: { a: 1 } };
+
+  // The account has one bottle; this device has two and agrees on the rest.
+  const behind = { bottles: [{ id: 'B1' }], history: [], custom: { a: 1 } };
+  const seeded = L.pushedFromRemote(KEYS, S_, behind);
+  eq('the keys the account already holds are recorded',
+    Object.keys(seeded).sort(), ['custom', 'history']);
+  eq('so the push that follows carries only the bottles',
+    L.changedKeys(KEYS, S_, seeded), ['bottles']);
+
+  /* A device that matches the account sends NOTHING. Without this the
+     first push of every session would be the whole shelf, which is the
+     250KB write that kept timing out. */
+  eq('a device in step pushes nothing',
+    L.changedKeys(KEYS, S_, L.pushedFromRemote(KEYS, S_, S_)), []);
+
+  // A key the account has never held is not recorded, so it goes up.
+  eq('a key the account lacks entirely is pushed',
+    L.changedKeys(['wish'], { wish: [{ name: 'Longrow 18' }] },
+      L.pushedFromRemote(['wish'], { wish: [{ name: 'Longrow 18' }] }, {})),
+    ['wish']);
+
+  // A merged key differs from both copies by definition, so it must push.
+  const localFavs = { favs: { a: 1 } };
+  const remoteFavs = { favs: { b: 1 } };
+  const merged = { favs: Object.assign({}, localFavs.favs, remoteFavs.favs) };
+  eq('a merged key is not treated as already sent',
+    L.changedKeys(['favs'], merged,
+      L.pushedFromRemote(['favs'], merged, remoteFavs)), ['favs']);
+
+  // An empty account: everything is new, nothing is recorded.
+  eq('a first sign-in sends the lot',
+    L.changedKeys(KEYS, S_, L.pushedFromRemote(KEYS, S_, {})), KEYS);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
