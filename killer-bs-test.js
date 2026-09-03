@@ -927,8 +927,16 @@ for (let i = 0; i < 6; i++) {
 const houseBot = Object.keys(houseCat).map((k, i) =>
   ({ id: 'hb' + i, k: k, status: 'open' }));
 const hg = L.gapsFromHouses(houseCat, houseBot);
+// The gap is still raised; what changed is that it no longer names the
+// house in the thing to go and buy. "Something from BigHouse at a very
+// different strength" asked for a bottle the app had no grounds to believe
+// BigHouse makes.
 eq('a house with six bottles in a narrow band is flagged',
-  hg.some(g => /very different strength/.test(g.name)), true);
+  hg.some(g => /cask-strength/i.test(g.name)), true);
+eq('and it does not name the house in the ask',
+  hg.some(g => /cask-strength/i.test(g.name) && /BigHouse/.test(g.name)), false);
+eq('while the house is named in the reason',
+  hg.some(g => /cask-strength/i.test(g.name) && /BigHouse/.test(g.why)), true);
 eq('and it is an extension, not a hole', hg[0].kind, 'extend');
 // Three bottles is not yet a commitment worth a suggestion.
 const small = { a: { k: 'a', dist: 'Small', proof: 90 },
@@ -1089,8 +1097,12 @@ const parsed = L.parseCandidates(raw, cCat);
 eq('anything already owned is dropped',
   parsed.bottles.some(b => /^Buffalo Trace Kentucky/.test(b.name)), false);
 eq('a nameless entry is dropped', parsed.bottles.length, 3);
-eq('dearest first, since the budget already excluded the silly answers',
-  parsed.bottles.map(b => b.price), [55, 45, 25]);
+// Was dearest first, and the display then sorted the survivors cheapest
+// first — so a sixth, cheaper, easier bottle was thrown away before
+// anything could show it. None of these three carries a findability, so
+// they rank equal on it and the price decides: cheapest first.
+eq('cheapest first, once nothing separates them on findability',
+  parsed.bottles.map(b => b.price), [25, 45, 55]);
 // A budget is a ceiling, not a suggestion. 15 percent over is allowed for
 // retail variance; twice over is not an answer to the question asked.
 const capped = L.parseCandidates({ bottles: [
@@ -1098,7 +1110,9 @@ const capped = L.parseCandidates({ bottles: [
   { name: 'A bit over', price_usd: 88 }, { name: 'Way over', price_usd: 250 }
 ] }, {}, 80);
 eq('the ceiling is enforced', capped.bottles.map(b => b.name),
-  ['A bit over', 'At it', 'Under']);
+  ['Under', 'At it', 'A bit over']);
+eq('and what is over the ceiling is gone, not merely last',
+  capped.bottles.some(b => b.name === 'Way over'), false);
 eq('no budget means no ceiling',
   L.parseCandidates({ bottles: [{ name: 'Dear', price_usd: 900 }] }, {}).bottles.length, 1);
 eq('an impossible proof is discarded, the bottle kept',
@@ -1265,8 +1279,14 @@ const alt = L.reframeGap(finishGap, rfCat);
 eq('it reframes', !!alt, true);
 eq('the constraint on the house is dropped', alt.dist, undefined);
 eq('but the category is kept', alt.sub, 'bourbon');
-eq('and it says why the house cannot answer',
-  /does not release a finished bottling/.test(alt.why), true);
+// It must say what is true of the SHELF, not make a claim about the
+// distillery. "Bunnahabhain does not bottle at cask strength" was asserted
+// to BZ while his Bunnahabhain 21 Cask Strength sat in the set being
+// described — the app knows what is on the shelf and nothing more.
+eq('it says what the shelf shows',
+  /Nothing you have from Buffalo Trace is finished/.test(alt.why), true);
+eq('and does not claim what the house does or does not release',
+  /does not release|does not bottle|does not put/.test(alt.why), false);
 eq('it aims near the house\u2019s own strength', alt.near, 95);
 // Strength and age reframe the same way.
 eq('a strength gap reframes',
@@ -1864,6 +1884,791 @@ eq('having everything reads differently',
   'You have all of these open.');
 eq('and it knows what YOU are bringing',
   L.proposalAsks(prop, myCat, myBot, 'Marcus').bringing, 1);
+}
+
+{
+sec('do two names describe the same bottle');
+// This comparison has caused three separate bugs — digits alone matching,
+// a common word matching, a prefix matching — so it is pinned properly.
+eq('the same bottle, said longer',
+  L.nameAgrees('Lagavulin 16', 'Lagavulin 16 Year Old'), true);
+eq('a fuller name still agrees',
+  L.nameAgrees('E.H. Taylor Cured Oak', 'Colonel E.H. Taylor Cured Oak'), true);
+eq('and a shorter one',
+  L.nameAgrees('Buffalo Trace Kentucky Straight', 'Buffalo Trace'), true);
+// A bottle assembled from real parts is the failure that matters: Old
+// Forester 1920 is real, Smoked Cinnamon Malt is not an expression of it,
+// and it came back from an actual run.
+eq('an invented expression does not agree',
+  L.nameAgrees('Old Forester 1920 Smoked Cinnamon Malt',
+               'Old Forester 1920 Prohibition Style'), false);
+eq('a number in one and not the other is a different bottling',
+  L.nameAgrees("Maker's Mark 101", "Maker's Mark"), false);
+eq('nor do two expressions of one range',
+  L.nameAgrees('Elijah Craig Toasted Barrel', 'Elijah Craig Barrel Proof'), false);
+eq('nothing agrees with nothing', L.nameAgrees('', 'x'), false);
+
+sec('a suggestion has to be sourced');
+// A name is not evidence. Asking for the page it was found on does not
+// prove a bottle exists, but it raises the bar and separates what was seen
+// from what was reasoned.
+const withSrc = L.parseCandidates({ bottles: [
+  { name: 'Seen One', price_usd: 50, source: 'totalwine.com', confident: true },
+  { name: 'Reasoned One', price_usd: 60, source: '', confident: true },
+  { name: 'Hedged One', price_usd: 70, source: 'breakingbourbon.com',
+    confident: false }
+] }, {}, 100);
+eq('a sourced and confident one is marked so',
+  withSrc.bottles.find(b => b.name === 'Seen One').confident, true);
+// Confident without a source is not confidence, it is assertion.
+eq('confidence without a source does not count',
+  withSrc.bottles.find(b => b.name === 'Reasoned One').confident, false);
+eq('and an honest hedge is respected',
+  withSrc.bottles.find(b => b.name === 'Hedged One').confident, false);
+// Sourced first: the cost of a wrong answer here is a wasted trip.
+eq('what was actually seen ranks first', withSrc.bottles[0].name, 'Seen One');
+}
+
+{
+sec('how long ago');
+const t0 = 1700000000000;
+eq('nothing is never', L.ago(0, t0), 'never');
+eq('a moment is just now', L.ago(t0 - 30000, t0), 'just now');
+eq('minutes', L.ago(t0 - 20 * 60000, t0), '20 minutes ago');
+// One of a thing is not "1 hours ago".
+eq('one hour is singular', L.ago(t0 - 3600000, t0), '1 hour ago');
+eq('several are plural', L.ago(t0 - 3 * 3600000, t0), '3 hours ago');
+eq('one day is singular', L.ago(t0 - 86400000, t0), '1 day ago');
+eq('days', L.ago(t0 - 5 * 86400000, t0), '5 days ago');
+eq('and then months', L.ago(t0 - 70 * 86400000, t0), '2 months ago');
+}
+
+{
+sec('the master library');
+const lib = {
+  a: { k: 'a', name: 'Lagavulin 16', proof: 86, dist: 'Lagavulin', sub: 'scotch' }
+};
+// Something the library already has is not a contribution.
+eq('a known bottle is not offered',
+  L.worthContributing({ name: 'Lagavulin 16', proof: 86, dist: 'X' }, lib), false);
+eq('however it is spelled',
+  L.worthContributing({ name: 'lagavulin  16', proof: 86, dist: 'X' }, lib), false);
+// A name and a proof alone help nobody find it again.
+eq('a bare name is not worth having',
+  L.worthContributing({ name: 'Mystery', proof: 90 }, lib), false);
+eq('but a distillery makes it findable',
+  L.worthContributing({ name: 'Mystery', proof: 90, dist: 'Somewhere' }, lib), true);
+eq('so does a category',
+  L.worthContributing({ name: 'Mystery', proof: 90, sub: 'rye' }, lib), true);
+eq('no proof, no entry',
+  L.worthContributing({ name: 'Mystery', dist: 'X' }, lib), false);
+
+sec('what the library holds');
+const entry = L.libraryEntry({ k: 'x', name: 'A Whisky', proof: 100,
+  dist: 'House', sub: 'rye', fin: 'Oloroso', msrp: 60,
+  tn: { nose: 'n', palate: 'p', finish: 'f' },
+  drained: true, note: 'my own note' });
+eq('the whisky travels', entry.name, 'A Whisky');
+eq('with its cask', entry.fin, 'Oloroso');
+eq('and its notes', entry.tn.nose, 'n');
+// Facts about YOUR shelf are not facts about the whisky.
+eq('but not whether yours is drained', entry.drained, undefined);
+eq('nor your own scribble', entry.note, undefined);
+
+sec('accepting one');
+const ok = L.mergeContribution(lib, { name: 'Springbank 15', proof: 92,
+  dist: 'Springbank', sub: 'scotch' });
+eq('a new product merges', ok.ok, true);
+eq('and normalises to a key', !!ok.key, true);
+// A contribution is one person's opinion; the library is what everybody
+// has agreed on, so it can add but never overwrite.
+const clash = L.mergeContribution(lib, { name: 'lagavulin 16', proof: 999,
+  dist: 'Wrong' });
+eq('it cannot overwrite what is there', clash.ok, false);
+eq('and says why', /already in the library/.test(clash.why), true);
+eq('a nameless one is refused', L.mergeContribution(lib, { proof: 90 }).ok, false);
+}
+
+{
+sec('a key a database can use');
+// The library was a single array because Firebase forbids a full stop in a
+// key and bottle names are full of them. Encoding the key is the fix;
+// abandoning keys threw away every property of a database.
+eq('full stops encode', L.libKey('Colonel E.H. Taylor Cured Oak'),
+  'colonel_e_h_taylor_cured_oak');
+// An apostrophe is a separator like any other punctuation. What matters is
+// that it is STABLE, not that it reads prettily.
+eq('so do apostrophes and digits', L.libKey("Booker's 2024-02"), 'booker_s_2024_02');
+eq('nothing illegal survives',
+  /[.#$\[\]/]/.test(L.libKey('Belle Meade 108.3 Proof #2 [x]')), false);
+eq('no leading or trailing underscore', L.libKey('  A Whisky  '), 'a_whisky');
+eq('nothing is nothing', L.libKey(''), '');
+
+// Built from the RAW name, not the normalised one. shopNorm drops words
+// like "whiskey" for matching, which is right for matching and fatal for a
+// key: these two are different bottles that normalise to one string.
+eq('two bottles do not collide',
+  L.libKey('Barrell Craft Spirits Private Release')
+    === L.libKey('Barrell Craft Spirits Private Release Whiskey'), false);
+eq('and the same bottle keys the same',
+  L.libKey('Lagavulin 16'), L.libKey('lagavulin  16'));
+
+sec('a correction to the library');
+const entry = { name: 'Ardbeg Wee Beastie', proof: 94.8, dist: 'Ardbeg',
+                sub: 'scotch' };
+// The case this exists for: the age sat wrong here for weeks.
+eq('a missing age is a correction',
+  L.correctionFor({ proof: 94.8, age: 5 }, entry).age.now, 5);
+eq('and it records what it was', L.correctionFor({ age: 5 }, entry).age.was, null);
+// Not everything counts.
+eq('rounding is not a correction', L.correctionFor({ proof: 94.83 }, entry), null);
+eq('a blank is not a claim', L.correctionFor({ proof: '', age: null }, entry), null);
+// A name change is a different bottle, not a correction to this one.
+eq('a name cannot be corrected',
+  L.correctionFor({ name: 'Something Else' }, entry), null);
+// Notes fill a gap but do not overwrite: a difference of opinion about a
+// nose is not an error.
+eq('notes fill an absence',
+  !!L.correctionFor({ tn: { nose: 'n' } }, entry).tn, true);
+eq('but do not overwrite one',
+  L.correctionFor({ tn: { nose: 'mine' } },
+    Object.assign({ tn: { nose: 'theirs' } }, entry)), null);
+
+sec('applying one');
+const fixed = L.applyCorrection(entry, L.correctionFor({ age: 5 }, entry));
+eq('the field changes', fixed.age, 5);
+eq('the rest does not', fixed.proof, 94.8);
+eq('and the original is untouched', entry.age, undefined);
+}
+
+{
+sec('searching the library');
+const lib = {};
+[['Ardbeg 10 Years Old', 'Ardbeg', 'scotch', 'Islay', 92],
+ ['Ardbeg Uigeadail', 'Ardbeg', 'scotch', 'Islay', 108.4],
+ ['Lagavulin 16', 'Lagavulin', 'scotch', 'Islay', 86],
+ ['Buffalo Trace', 'Buffalo Trace', 'bourbon', 'Kentucky', 90]]
+  .forEach(([n, d, s, r, pf]) => {
+    lib[L.libKey(n)] = { name: n, dist: d, sub: s, region: r, proof: pf,
+                         tn: { nose: 'n' } };
+  });
+
+eq('a distillery finds its bottles', L.searchLibrary(lib, 'ardbeg').length, 2);
+eq('a region finds more', L.searchLibrary(lib, 'islay').length, 3);
+// Every word has to match, or a two-word search is looser than a one-word
+// one, which is the opposite of what anybody expects.
+eq('two words narrow rather than widen',
+  L.searchLibrary(lib, 'islay ardbeg').length, 2);
+eq('a category works too', L.searchLibrary(lib, 'bourbon').length, 1);
+eq('nothing matches nothing', L.searchLibrary(lib, 'zzz').length, 0);
+eq('an empty search lists everything', L.searchLibrary(lib, '').length, 4);
+eq('sorted by name', L.searchLibrary(lib, '')[0].name, 'Ardbeg 10 Years Old');
+eq('the key travels with it', !!L.searchLibrary(lib, 'lagavulin')[0]._key, true);
+eq('a limit is honoured', L.searchLibrary(lib, '', 2).length, 2);
+
+sec('what is thin');
+eq('a complete entry has no gaps', L.libraryGaps(lib[L.libKey('Lagavulin 16')]), []);
+eq('a missing proof shows',
+  L.libraryGaps({ name: 'X', dist: 'D', sub: 'rye', tn: { nose: 'n' } }),
+  ['proof']);
+eq('several show', L.libraryGaps({ name: 'X' }).length, 4);
+eq('notes count as a gap',
+  L.libraryGaps({ name: 'X', proof: 90, dist: 'D', sub: 'rye' }), ['notes']);
+}
+
+{
+sec('favourites');
+// A favourite is a property of the WHISKY, not of a bottle: three bottles
+// of the same thing are one favourite, and it survives finishing one and
+// opening the next.
+const favState = { favs: {} };
+const mark = k => { if (favState.favs[k]) delete favState.favs[k];
+                    else favState.favs[k] = 1; };
+mark('a');
+eq('marking sets it', !!favState.favs.a, true);
+mark('a');
+eq('marking again clears it', !!favState.favs.a, false);
+
+// Filtering is a plain intersection, and must not disturb the sort it is
+// applied to.
+const rows = [{ k: 'a', name: 'A' }, { k: 'b', name: 'B' }, { k: 'c', name: 'C' }];
+const favs = { a: 1, c: 1 };
+const only = rows.filter(p => favs[p.k]);
+eq('only favourites survive', only.map(p => p.k), ['a', 'c']);
+eq('and their order is untouched', only[0].k, 'a');
+eq('no favourites means nothing, not everything',
+  rows.filter(p => ({})[p.k]).length, 0);
+// A favourite for a bottle no longer on the shelf must not be counted, or
+// the badge promises rows the list cannot show.
+const catalog = { a: { k: 'a' }, b: { k: 'b' } };
+eq('a favourite off the shelf does not count',
+  Object.keys({ a: 1, gone: 1 }).filter(k => catalog[k]).length, 1);
+}
+
+{
+sec('what you paid');
+const bots = [
+  { id: '1', k: 'a', status: 'open', paid: 50 },
+  { id: '2', k: 'a', status: 'sealed', paid: 70 },
+  { id: '3', k: 'b', status: 'open', paid: null },
+  { id: '4', k: 'c', status: 'gone', paid: 40 },
+  { id: '5', k: 'd', status: 'open', paid: 0 }
+];
+eq('bottles you still have', L.myBottles('a', bots).map(b => b.id), ['1', '2']);
+// A finished bottle is not on the shelf and must not be counted or averaged.
+eq('a finished one is not yours any more', L.myBottles('c', bots), []);
+eq('the count follows the same rule', L.ownedCount('a', bots), 2);
+
+// Two bottles bought at different prices average, because one number for
+// bottles bought years apart is a fiction either way.
+eq('an average across what you paid', L.paidFor('a', bots).avg, 60);
+eq('and it says how many', L.paidFor('a', bots).n, 2);
+eq('no price recorded means none', L.paidFor('b', bots), null);
+// A gift or an unrecorded price is zero, not free.
+eq('zero is not a price', L.paidFor('d', bots), null);
+eq('nothing owned means none', L.paidFor('zz', bots), null);
+}
+
+{
+sec('guessing a category');
+// Defaulting to bourbon turned Longrow 18 — a peated Campbeltown malt —
+// into a bourbon. A blank invites a correction; a confident wrong answer
+// does not.
+eq('a Campbeltown malt is Scotch', L.guessSub('Longrow 18', 'Springbank'), 'scotch');
+eq('so is an Islay one', L.guessSub('Ardbeg Uigeadail', ''), 'scotch');
+eq('a pot still is Irish', L.guessSub('Redbreast 12 Year', ''), 'irish');
+eq('rye in the name is rye', L.guessSub('Sazerac Rye', ''), 'rye');
+eq('bourbon in the name is bourbon', L.guessSub('Old Forester 1920 Bourbon', ''), 'bourbon');
+eq('a Japanese house is Japanese', L.guessSub('Nikka From The Barrel', ''), 'japanese');
+// A name that says nothing gets NOTHING, which is the whole point.
+eq('an unguessable name is left blank', L.guessSub('Eagle Rare 10', ''), null);
+eq('and so is an empty one', L.guessSub('', ''), null);
+// The guess only fills a gap; a stated category always wins.
+eq('a stated category is not overridden',
+  L.normalizeProduct({ name: 'Longrow 18', sub: 'scotch' }).sub, 'scotch');
+eq('a guess fills a blank',
+  L.normalizeProduct({ name: 'Longrow 18', dist: 'Springbank' }).sub, 'scotch');
+eq('and an unguessable one stays blank',
+  L.normalizeProduct({ name: 'Eagle Rare 10' }).sub, '');
+}
+
+{
+sec('proof in tens');
+const cat = {}; const bots = [];
+[[86, 'a'], [94.8, 'b'], [100, 'c'], [107, 'd'], [125, 'e']].forEach(([pf, k]) => {
+  cat[k] = { k: k, name: k, proof: pf };
+  bots.push({ id: k, k: k, status: 'open' });
+});
+const tens = L.proofTens(cat, bots);
+eq('a band per ten', tens.map(t => t[1]),
+  ['80\u201389', '90\u201399', '100\u2013109', '120\u2013129']);
+// An empty range is a chip somebody can press to see nothing.
+eq('empty bands are left out', tens.some(t => t[1] === '110\u2013119'), false);
+eq('counted', tens.map(t => t[2]), [1, 1, 2, 1]);
+eq('and sorted low to high', tens[0][0], 'p80');
+
+// A bottle you no longer own must not be counted, or the chip promises rows
+// the list cannot show.
+eq('a finished bottle is not counted',
+  L.proofTens(cat, [{ id: 'x', k: 'a', status: 'gone' }]).length, 0);
+eq('nor is a bottle with no proof',
+  L.proofTens({ z: { k: 'z', name: 'z' } },
+    [{ id: 'z', k: 'z', status: 'open' }]).length, 0);
+
+eq('a band holds its own decade', L.proofInTen('p90', 94.8), true);
+eq('and not the next', L.proofInTen('p90', 100), false);
+eq('nor the one below', L.proofInTen('p90', 89.9), false);
+eq('the boundary belongs to the lower band', L.proofInTen('p100', 100), true);
+eq('junk matches nothing', L.proofInTen('nonsense', 90), false);
+}
+
+{
+sec('searching for a cask');
+// The shelf holds 18 PX bottles and a search for PX found 5, because the
+// search read the name and distillery only and 13 of them record the cask
+// as Pedro Ximenez — which nobody types.
+const cat = {
+  a: { k: 'a', name: 'Laphroaig PX Cask', dist: 'Laphroaig', fin: 'Pedro Ximenez' },
+  b: { k: 'b', name: 'Glendronach 15 Revival', dist: 'Glendronach',
+       fin: 'Pedro Ximenez+Oloroso' },
+  c: { k: 'c', name: 'Ardbeg Ten', dist: 'Ardbeg', region: 'Islay',
+       fin: null, style: 'single malt' },
+  d: { k: 'd', name: 'Eagle Rare', dist: 'Buffalo Trace', fin: 'New oak' }
+};
+const bots = Object.keys(cat).map(k => ({ id: k, k: k, status: 'open' }));
+const find = q => L.shelfFilter(Object.values(cat), bots, { q: q }).map(p => p.k);
+
+eq('the cask is searched, not just the name', find('pedro ximenez'), ['a', 'b']);
+// PX and Pedro Ximenez are the same cask spelled two ways.
+eq('and a shorthand finds the long form', find('px'), ['a', 'b']);
+eq('both directions', find('Pedro Xim\u00e9nez'), ['a', 'b']);
+eq('the region is searched too', find('islay'), ['c']);
+eq('and the style', find('single malt'), ['c']);
+
+sec('broader is not the same as equal');
+// Sherry covers PX; PX does not cover sherry. Treating them as equal made
+// a search for PX return every sherried bottle on the shelf.
+eq('sherry finds its members', find('sherry'), ['a', 'b']);
+eq('but PX does not become sherry',
+  L.expandQuery('px').indexOf('oloroso'), -1);
+eq('while sherry reaches oloroso',
+  L.expandQuery('sherry').indexOf('oloroso') >= 0, true);
+eq('an unknown word expands to itself', L.expandQuery('lagavulin'), ['lagavulin']);
+eq('and nothing expands to nothing', L.expandQuery(''), []);
+}
+
+{
+sec('a search reads more than the name');
+const p = { k: 'x', name: 'Old Bardstown Bottled in Bond', dist: 'Willett',
+  fin: 'Pedro Ximenez', region: 'Kentucky', sub: 'bourbon',
+  notes: 'the one from the trip',
+  tn: { nose: 'Cinnamon and leather', palate: 'Dark fruit', finish: 'Long' } };
+
+eq('the name', L.matchesQuery(p, 'bardstown'), true);
+// Bardstown is a distillery AND a town: one bottle is made BY Bardstown
+// Bourbon Company, another is Old Bardstown made by Willett, and both
+// should answer to the word.
+eq('the distiller, which is a different name', L.matchesQuery(p, 'willett'), true);
+eq('the cask', L.matchesQuery(p, 'pedro ximenez'), true);
+eq('a shorthand for the cask', L.matchesQuery(p, 'px'), true);
+eq('the region', L.matchesQuery(p, 'kentucky'), true);
+eq('the category', L.matchesQuery(p, 'bourbon'), true);
+// A note is often the only handle somebody has: they remember cinnamon,
+// not what it was called.
+eq('a word from the tasting note', L.matchesQuery(p, 'cinnamon'), true);
+eq('or from the finish', L.matchesQuery(p, 'dark fruit'), true);
+eq('or your own scribble', L.matchesQuery(p, 'trip'), true);
+eq('and not something absent', L.matchesQuery(p, 'lagavulin'), false);
+
+sec('one search, not two');
+// The shelf and the library each had their own matcher, so PX returned 18
+// on one and 5 on the other — a disagreement between two answers to the
+// same question, which is worse than either being wrong.
+const cat = { x: p, y: { k: 'y', name: 'Ardbeg Ten', dist: 'Ardbeg',
+  region: 'Islay', sub: 'scotch' } };
+const bots = [{ id: '1', k: 'x', status: 'open' },
+              { id: '2', k: 'y', status: 'open' }];
+['px', 'islay', 'bardstown', 'cinnamon', 'islay scotch'].forEach(q => {
+  const onShelf = L.shelfFilter(Object.values(cat), bots, { q: q }).length;
+  const inLib = L.searchLibrary(cat, q, 99).length;
+  eq('shelf and library agree on "' + q + '"', onShelf, inLib);
+});
+
+sec('a phrase is not two words');
+// Splitting on whitespace turned "Pedro Ximenez" into two words, neither of
+// which expands, so the synonym never fired.
+eq('a known phrase stays whole', L.queryTerms('pedro ximenez'), ['pedro ximenez']);
+eq('and still splits what is not one', L.queryTerms('islay sherry'),
+  ['islay', 'sherry']);
+eq('a phrase inside a longer query survives',
+  L.queryTerms('cask strength rye'), ['cask strength', 'rye']);
+eq('every word must match, so two words narrow',
+  L.shelfFilter(Object.values(cat), bots, { q: 'islay bardstown' }).length, 0);
+}
+
+{
+sec('cask strength is a fact, not a guess');
+// The app had no notion of it and inferred from proof, which is why it told
+// BZ that Bunnahabhain does not bottle at cask strength while his
+// Bunnahabhain 21 Cask Strength sat on the shelf at 107.2 proof.
+eq('a label that says so is the fact',
+  L.isCaskStrength({ name: 'Bunnahabhain 21 year Cask Strength', proof: 107.2 }), true);
+eq('however it is worded',
+  L.isCaskStrength({ name: 'Elijah Craig Barrel Proof', proof: 124 }), true);
+eq('and full proof counts',
+  L.isCaskStrength({ name: 'Sazerac Full Proof', proof: 125 }), true);
+// Proof is a hint for the ones that do not say it in words.
+eq('115 and over is cask strength in practice',
+  L.isCaskStrength({ name: "Aberlour A'Bunadh", proof: 119.8 }), true);
+eq('but 107 alone is not',
+  L.isCaskStrength({ name: 'Bunnahabhain 18', proof: 92.6 }), false);
+eq('nothing is not', L.isCaskStrength(null), false);
+
+sec('a reframe describes the shelf');
+const bunn = {};
+[['Bunnahabhain 12', 92.6], ['Bunnahabhain 21 year Cask Strength', 107.2]]
+  .forEach(([n, pf], i) => {
+    bunn['b' + i] = { k: 'b' + i, name: n, dist: 'Bunnahabhain',
+                      sub: 'scotch', proof: pf };
+  });
+// The house HAS one, so there is nothing to reframe — saying otherwise is
+// wrong in front of the bottle that disproves it.
+eq('no reframe when the shelf already answers it',
+  L.reframeGap({ dist: 'Bunnahabhain', name: 'Something at a very different strength' },
+    bunn), null);
+
+const narrow = {};
+[92.6, 94, 95].forEach((pf, i) => {
+  narrow['n' + i] = { k: 'n' + i, name: 'House ' + i, dist: 'House',
+                      sub: 'scotch', proof: pf };
+});
+const r = L.reframeGap({ dist: 'House', name: 'Something at a very different strength' },
+  narrow);
+eq('it reframes when the shelf genuinely has none', !!r, true);
+eq('and speaks about your bottles', /None of your 3 from House/.test(r.why), true);
+eq('leaving room for the house to release one',
+  /if they release one/.test(r.why), true);
+}
+
+{
+sec('publishing without destroying');
+// An Import JSON replaces everything at the path. That is right for seeding
+// an empty library and wrong the moment anybody else uses it: a
+// contribution accepted since is destroyed without a word.
+const libNow = {
+  lagavulin_16: { name: 'Lagavulin 16', proof: 86, at: 100 },
+  somebody_elses_add: { name: "Somebody Else's Add", proof: 92, at: 200 }
+};
+const publishing = [{ name: 'Lagavulin 16', proof: 86, fin: 'Oloroso' }];
+
+// What an update() call would send: named keys only, plus the stamp.
+const updates = { stamp: 300 };
+publishing.forEach(p => {
+  updates['catalog/products/' + L.libKey(p.name)] =
+    Object.assign(L.libraryEntry(p), { at: 300 });
+});
+
+eq('it writes only what was named', Object.keys(updates).sort(),
+  ['catalog/products/lagavulin_16', 'stamp']);
+// The one that matters: nothing addresses the other entry, so nothing can
+// remove it.
+eq('somebody else\u2019s addition is not addressed at all',
+  Object.keys(updates).some(k => k.indexOf('somebody_elses_add') >= 0), false);
+eq('and the correction does travel',
+  updates['catalog/products/lagavulin_16'].fin, 'Oloroso');
+eq('stamped, or no device would see it',
+  updates['catalog/products/lagavulin_16'].at, 300);
+
+// What goes is the whisky, not your shelf.
+const entry = L.libraryEntry({ name: 'X', proof: 100, fin: 'Sherry',
+  drained: true, paid: 60, notes: 'mine' });
+eq('a library entry carries the cask', entry.fin, 'Sherry');
+eq('but not what you paid', entry.paid, undefined);
+eq('nor your own note', entry.notes, undefined);
+}
+
+{
+sec('a finding must be answerable');
+// "A finished bottling from Buffalo Trace" asks for something the app has
+// no grounds to believe that house makes. It can see 24 bottles and no
+// finish, and nothing more — the observation is sound, the instruction was
+// not, and no amount of dismissing fixes a thing that should not have been
+// offered.
+// Proofs spread wide enough that the STRENGTH gap does not fire first —
+// the checks are an else-if chain, so a narrow shelf never reaches the
+// finish question.
+const bt = {};
+[90, 100, 107, 115, 125, 130].forEach((pf, i) => {
+  bt['b' + i] = { k: 'b' + i, name: 'BT ' + i, dist: 'Buffalo Trace',
+                  sub: 'bourbon', proof: pf, fin: null, msrp: 40 };
+});
+const bots = Object.keys(bt).map(k => ({ id: k, k: k, status: 'open' }));
+const gaps = L.shelfGaps(bt, bots, [], [], [], {});
+const fin = gaps.find(g => /finished/i.test(g.name));
+eq('a finish gap is still raised', !!fin, true);
+// The name must not name the house.
+eq('but it does not name the house', /Buffalo Trace/.test(fin.name), false);
+eq('it asks the answerable question', fin.name, 'A finished Bourbon');
+// The house belongs in the reason, where it is an observation about the
+// shelf rather than a claim about a distillery's range.
+eq('the house is in the reason', /Buffalo Trace/.test(fin.why), true);
+eq('and it leaves the door open',
+  /Theirs if they release one/.test(fin.why), true);
+// Nothing constrains the search to that house any more, which is what
+// made every suggestion a rejected substitute.
+eq('the search is not constrained to the house', fin.dist, undefined);
+eq('but the category is kept', fin.sub, 'bourbon');
+}
+
+{
+sec('judging a bottle in a shop');
+const jCat = {
+  a: { k: 'a', name: 'House A 12', dist: 'House', sub: 'scotch', proof: 92,
+       region: 'Islay', msrp: 60 },
+  b: { k: 'b', name: 'House A 15', dist: 'House', sub: 'scotch', proof: 94,
+       region: 'Islay', msrp: 80 },
+  c: { k: 'c', name: 'House A 18', dist: 'House', sub: 'scotch', proof: 96,
+       region: 'Islay', msrp: 120 }
+};
+const jBot = ['a', 'b', 'c'].map(k => ({ id: k, k: k, status: 'open' }));
+
+// DEEPER: a house you own three of, at a strength outside their range.
+const deeper = L.shelfFit({ name: 'House A Cask Strength', dist: 'House',
+  sub: 'scotch', proof: 120, region: 'Islay' }, jCat, jBot, []);
+eq('going further into a house you know is deeper',
+  deeper.findings.some(f => f.group === 'deeper'), true);
+eq('and it says what their range is',
+  /92 to 96/.test(deeper.findings.find(f => f.group === 'deeper').msg), true);
+
+// BROADER: ground the shelf does not cover.
+const broader = L.shelfFit({ name: 'Something Else', dist: 'Elsewhere',
+  sub: 'bourbon', proof: 100 }, jCat, jBot, []);
+eq('a new distillery is broader',
+  broader.findings.some(f => f.group === 'broader'), true);
+eq('and a new category too',
+  broader.findings.filter(f => f.group === 'broader').length >= 2, true);
+
+sec('a flight it would complete');
+// The strongest reason there is, and the judge never looked. A wish pour is
+// a bottle NOBODY owns — named rather than keyed — which is exactly the
+// case, and filtering to shelf pours could never see it.
+const flight = { title: 'A FLIGHT', core: [
+  { k: 'a', role: 'core' }, { k: 'b', role: 'core' },
+  { letter: '3', kind: 'wish', name: 'The Missing One', proof: 100 }
+] };
+const unlock = L.shelfFit({ name: 'The Missing One', sub: 'scotch',
+  proof: 100 }, jCat, jBot, [flight]);
+eq('it sees the flight', unlock.findings.some(f => f.group === 'flight'), true);
+eq('and says it is the last pour',
+  /last pour/.test(unlock.findings.find(f => f.group === 'flight').msg), true);
+// It outranks everything except already owning it.
+eq('and that settles the verdict', L.fitVerdict(unlock),
+  'It finishes a flight you cannot currently run.');
+// A bottle with nothing to do with the flight does not claim to complete it.
+eq('an unrelated bottle claims nothing',
+  L.shelfFit({ name: 'Unrelated', sub: 'rye', proof: 100 }, jCat, jBot,
+    [flight]).findings.some(f => f.group === 'flight'), false);
+
+sec('a number in the query must survive the match');
+// "Jack Daniel's #7" scored well on "jack daniels" alone and filled the
+// form with a Bonded bottle BZ owns — 100 proof, $64.99 — for a bottle he
+// does not, which is 80 proof and half the price.
+const jd = { x: { k: 'x', name: "Jack Daniel's Bonded Tennessee Whiskey",
+  dist: "Jack Daniel's", sub: 'tennessee', proof: 100, msrp: 64.99 } };
+eq('a query naming a number the match lacks does not fill the form',
+  L.lookupFromCatalog("jack daniel's #7", jd), null);
+eq('but a query that agrees still does',
+  (L.lookupFromCatalog("jack daniel's bonded", jd) || {}).proof, 100);
+}
+
+{
+sec('matching a bottle by name');
+const mCat = {
+  bt: { k: 'bt', name: 'Buffalo Trace Kentucky Straight Bourbon',
+        dist: 'Buffalo Trace', proof: 90, sub: 'bourbon', msrp: 25 },
+  bl: { k: 'bl', name: "Blanton's Black Label Single Barrel",
+        dist: 'Buffalo Trace', proof: 93, sub: 'bourbon', msrp: 65 },
+  rb: { k: 'rb', name: 'Redbreast 12 Year Cask Strength',
+        dist: 'Midleton', proof: 115, sub: 'irish', msrp: 90 },
+  jd: { k: 'jd', name: "Jack Daniel's Bonded Tennessee Whiskey",
+        dist: "Jack Daniel's", proof: 100, sub: 'tennessee', msrp: 65 }
+};
+
+// A word matching the DISTILLERY counted as much as one matching the name,
+// so "Buffalo Trace Bourbon" returned four Blanton's at a perfect score —
+// Blanton's is made at Buffalo Trace — and the actual bottle did not place.
+eq('the bottle named wins over its distillery-mates',
+  L.shopSearch('Buffalo Trace Bourbon', mCat, 1)[0].p.k, 'bt');
+eq('and the distillery match still scores something',
+  L.shopSearch('Buffalo Trace Bourbon', mCat, 4).length > 1, true);
+
+sec('numbers must agree in both directions');
+// A query naming a number the match lacks is a different bottle: "#7"
+// filled the form with Bonded's 100 proof and $64.99.
+eq('a number in the query the match lacks',
+  L.lookupFromCatalog("jack daniel's #7", mCat), null);
+// And a match naming one the query lacks is equally different: plain
+// Redbreast is not Redbreast 12 Cask Strength, and filling from it puts a
+// cask-strength proof against a standard bottling.
+eq('a number in the match the query lacks',
+  L.lookupFromCatalog('Redbreast Irish Whiskey', mCat), null);
+eq('but agreement in both directions matches',
+  (L.lookupFromCatalog('Redbreast 12 Cask Strength', mCat) || {}).k, 'rb');
+eq('and a bottle with no numbers either side still matches',
+  (L.lookupFromCatalog("Jack Daniel's Bonded", mCat) || {}).k, 'jd');
+}
+
+{
+sec('barcodes');
+// A printed code carries hyphens, and a scanner may or may not give the
+// leading zero, so both are normalised away before anything is compared.
+eq('hyphens go', L.upcKey('0-80432-40063-0'), '080432400630');
+eq('a bare 12 stays', L.upcKey('080432400630'), '080432400630');
+eq('an 11-digit code is padded', L.upcKey('80432400630'), '080432400630');
+eq('a 13-digit EAN keeps its last 12',
+  L.upcKey('1080432400630'), '080432400630');
+eq('too short is not a barcode', L.upcKey('1234'), null);
+eq('nor is nothing', L.upcKey(''), null);
+
+sec('reading a listing');
+const listing = "Glenlivet: 750 ml 12-year 0-80432-40063-0 $36.99; "
+  + "750 ml 18-year 0-80432-40066-1 $64.99\n"
+  + "Lagavulin Scotch: 750 ml 16-year 0-88110-14005-2 $74.99";
+const rows = L.parseUpcListing(listing);
+eq('every entry is found', rows.length, 3);
+// The expression is what distinguishes a 12 from an 18 and is the whole
+// reason this source is worth anything — a listing that gave only the
+// brand would be no better than the paid database that could not tell
+// three Glenlivets apart.
+eq('the expression survives', rows[0].name, 'Glenlivet 12-year');
+eq('and distinguishes the next one', rows[1].name, 'Glenlivet 18-year');
+eq('sizes are kept', rows[0].size, '750 ml');
+eq('and prices', rows[1].price, 64.99);
+eq('a line with no barcode yields nothing',
+  L.parseUpcListing('Something: 750 ml no code here $20').length, 0);
+
+sec('a number cannot be searched by name');
+// The barcode source must answer FIRST. Nothing else can be asked with a
+// number, and when nothing knows it the honest answer is to say so.
+const known = { '080432400630': { name: 'Glenlivet 12-year', price: 36.99 } };
+const hit = L.resolveUpc('0-80432-40063-0', known, {});
+eq('a known barcode resolves to a name', hit.name, 'Glenlivet 12-year');
+eq('and carries what the listing knew', hit.price, 36.99);
+const miss = L.resolveUpc('9-99999-99999-9', known, {});
+eq('an unknown one says so', miss.ok, false);
+eq('and keeps the number, so it can be learned', miss.key, '999999999999');
+eq('junk is refused before anything else', L.resolveUpc('12', known, {}).ok, false);
+}
+
+{
+sec('a note made up for a flight is not a note');
+// A card note was written as a prompt to read aloud beside five other
+// pours — deeper, fuller, drier, than the ones next to it. On a bottle
+// screen, alone, it is not a description of the whisky, and counting it as
+// one meant 185 bottles looked described when nobody had ever described
+// them: the fill-in run reported 15 missing when it was 200.
+const card = { k: 'a', name: 'A', tn: { nose: 'Deeper fruit, oak' },
+               tnFrom: 'THE ABERLOUR HOUSE' };
+const real = { k: 'b', name: 'B', tn: { nose: 'Honey and apple' },
+               tnSrc: 'review' };
+const bare = { k: 'c', name: 'C' };
+
+eq('a card note counts as missing', L.needsEnhancing(card), true);
+eq('a real note does not', L.needsEnhancing(real), false);
+eq('and no note at all still does', L.needsEnhancing(bare), true);
+
+// It is hidden on the bottle rather than deleted: the flight keeps every
+// word, because there the comparison is on the table in front of you.
+eq('the note itself is untouched', card.tn.nose, 'Deeper fruit, oak');
+eq('and it still says which flight it belongs to', card.tnFrom,
+  'THE ABERLOUR HOUSE');
+
+// The QA pass agrees, or the two would disagree about the same bottle.
+const gaps = L.qaGaps ? null : null;
+eq('a card note is not a source either',
+  L.tnSource(card) !== null, true);
+}
+
+{
+sec('choosing the dimension');
+// Findings were computed from what is ABSENT, and absence is unbounded —
+// there are thousands of bottles nobody has, so "a Campbeltown Scotch" is
+// true, arbitrary, and still true next month. The axis is chosen now.
+const eCat = {};
+[['a', 'scotch', 'Islay', 92, 60, null], ['b', 'scotch', 'Islay', 94, 70, null],
+ ['c', 'scotch', 'Islay', 96, 80, 'Oloroso'], ['d', 'bourbon', null, 100, 40, null]]
+  .forEach(([k, sub, region, proof, msrp, fin], i) => {
+    eCat[k] = { k: k, name: 'B' + i, dist: 'House ' + i, sub: sub,
+                region: region, proof: proof, msrp: msrp, fin: fin };
+  });
+const eBot = Object.keys(eCat).map(k => ({ id: k, k: k, status: 'open' }));
+
+const region = L.exploreAxis('region', eCat, eBot);
+// Islay has three, so it is covered; the others are thin.
+eq('a region with three is not offered',
+  region.opportunities.some(o => o.value === 'Islay'), false);
+eq('one with none is', region.opportunities.some(o => o.have === 0), true);
+// Every opportunity must be a SEARCH, not a category somebody has to
+// translate for themselves.
+eq('each carries a real query',
+  region.opportunities.every(o => o.ask && o.ask.length > 6), true);
+eq('and says why it is thin',
+  region.opportunities.every(o => o.why && o.why.length > 6), true);
+// Thinnest first: nothing at all beats one you already have.
+eq('sorted by how thin it is',
+  region.opportunities[0].have <= region.opportunities[1].have, true);
+
+const wood = L.exploreAxis('wood', eCat, eBot);
+eq('a cask on the shelf is not offered',
+  wood.opportunities.some(o => /Oloroso/i.test(o.value)), false);
+eq('one that is not, is', wood.opportunities.some(o => /Port/i.test(o.value)), true);
+
+// It must work on a shelf with NO flights, which is the case BZ raised:
+// a new user has none, and the old findings leaned on them.
+eq('no flights are needed', L.exploreAxis('style', eCat, eBot)
+  .opportunities.length > 0, true);
+eq('an empty shelf yields nothing rather than throwing',
+  L.exploreAxis('region', {}, []).opportunities.length, 0);
+eq('an unknown axis is empty, not an error',
+  L.exploreAxis('nonsense', eCat, eBot).opportunities.length, 0);
+}
+
+{
+sec('reading a shop page');
+// A listing carries far more than a name and a price, and pulling only
+// those would be paying the lookup for what is already on the screen.
+const page = 'Aberlour 18 Year Old Double Sherry Cask Finish Single Malt '
+  + 'Scotch Whisky | The Whisky Shop 750ml $169.99 43% ABV Speyside '
+  + 'Nose: Rich dried fruit and dark chocolate. Palate: Full, oaky and dry. '
+  + 'Finish: Long and refined. Matured in Oloroso and Pedro Ximenez butts.';
+const r = L.readShopText(page, 'https://shop.example/x');
+
+eq('ABV becomes proof', r.proof, 86);
+eq('the age', r.age, 18);
+eq('the price', r.msrp, 169.99);
+eq('the size', r.size, '750ml');
+eq('the region', r.region, 'Speyside');
+eq('the category', r.sub, 'scotch');
+// Sherry is the family, PX and Oloroso are the casks — naming all three
+// says the same thing twice and then vaguely.
+eq('the specific casks, not the family', r.fin, 'Pedro Ximenez+Oloroso');
+// The colon matters: "Cask Finish" in a title is not a finish NOTE, and
+// matching the bare word pulled the shop's name in as one.
+eq('the finish note is the note', r.tn.finish, 'Long and refined.');
+eq('and the nose', r.tn.nose, 'Rich dried fruit and dark chocolate.');
+
+// A bare listing must not invent what is not there.
+const bare = L.readShopText('Eagle Rare 10 Year Bourbon 750ml $39.99 90 proof', '');
+eq('no note is invented', bare.tn, null);
+eq('no cask is invented', bare.fin, null);
+eq('but proof is read', bare.proof, 90);
+eq('and age', bare.age, 10);
+// A vintage is not an age.
+eq('1990 is not an age', L.readShopText('Distilled 1990 bourbon', '').age, null);
+
+sec('the name out of a page title');
+eq('the shop is dropped',
+  L.nameFromShopPage('Lagavulin 16 Year Old | The Whisky Exchange', ''),
+  'Lagavulin 16 Year Old');
+eq('so is the size',
+  L.nameFromShopPage('Ardbeg Ten 750ml', ''), 'Ardbeg Ten');
+// Nothing usable in the title: the URL path often carries it.
+eq('the url is the fallback',
+  L.nameFromShopPage('', 'https://shop.example/p/eagle-rare-10-year'),
+  'eagle rare 10 year');
+}
+
+{
+sec('how findable a suggestion is');
+// A $40 shelf staple and a $99 allocated release are not the same
+// suggestion at similar prices, and a bottle nobody can get is a taunt
+// rather than a recommendation.
+const raw = { bottles: [
+  { name: 'Larceny Small Batch', distillery: 'Heaven Hill', proof: 92,
+    price_usd: 40, find: 'shelf', why: 'a' },
+  { name: 'Old Fitzgerald BiB 7', distillery: 'Heaven Hill', proof: 100,
+    price_usd: 99, find: 'allocated', why: 'b' },
+  { name: 'Rebel 10 Single Barrel', distillery: 'Lux Row', proof: 100,
+    price_usd: 110, find: 'nonsense', why: 'c' },
+  { name: 'Maker\'s 46', distillery: "Maker's Mark", proof: 94,
+    price_usd: 45, why: 'd' }
+] };
+const r = L.parseCandidates(raw, {}, null, { name: 'Another Wheat' });
+eq('every bottle survives', r.bottles.length, 4);
+// By NAME, not by position: the parser sorts, so an index is whichever
+// bottle happened to be cheapest rather than the one written down here.
+const by = {};
+r.bottles.forEach(b => { by[b.name] = b; });
+eq('the price is read', by['Larceny Small Batch'].price, 40);
+eq('shelf is carried', by['Larceny Small Batch'].find, 'shelf');
+eq('so is allocated', by['Old Fitzgerald BiB 7'].find, 'allocated');
+// A value outside the three is not a label, it is a mistake — showing it
+// would put an invented word on screen as though the app knew something.
+eq('an unrecognised value is dropped', by['Rebel 10 Single Barrel'].find, null);
+eq('and a missing one is simply absent', by["Maker's 46"].find, null);
+// The three words have to have wording, or the tag renders blank.
+eq('every value has a label',
+  ['shelf', 'hunt', 'allocated'].every(k => !!L.FIND_LABEL[k]), true);
 }
 
 /* ---------------- overuse ---------------- */
@@ -2678,8 +3483,11 @@ eq('empty query returns the tasting group',
 eq('empty query respects the group', L.searchReference('', 'whiskey').length, L.WHISKEY.length);
 // A search crosses groups: someone looking for "char" does not know which
 // tab it lives on.
+// Against the group's own label rather than a copy of it: hardcoding the
+// name meant renaming a tab broke a test about searching.
+const KNOWN = L.REF_GROUPS.find(g => g.id === 'whiskey').label;
 eq('search crosses groups', L.searchReference('char')
-  .some(s => s.group === 'Whiskey'), true);
+  .some(s => s.group === KNOWN), true);
 eq('search results are labelled with their group',
   L.searchReference('alligator').every(s => !!s.group), true);
 // Terms that must exist because BZ's own flights turn on them.
@@ -2691,6 +3499,18 @@ eq('search results are labelled with their group',
 /* ---------------- real data ---------------- */
 sec('real collection data');
 const data = JSON.parse(fs.readFileSync(path.join(__dirname, 'data.json'), 'utf8'));
+// data.json stopped shipping bottles at v0.2.13 — which bottles somebody
+// owns is not reference data, and shipping BZ's meant every new user opened
+// the app already holding his 344. The real list lives beside it so these
+// checks still run against a genuine shelf rather than an empty one.
+data.bottles = JSON.parse(
+  fs.readFileSync(path.join(__dirname, 'bz-bottles.json'), 'utf8'));
+// Flights stopped shipping at v1.0.1 for the same reason bottles did: the
+// 325 products are reference data everybody should have, and the 36 flights
+// are one person's curriculum. They live beside the app so these checks
+// still run against a real one.
+data.flights = JSON.parse(
+  fs.readFileSync(path.join(__dirname, 'bz-flights.json'), 'utf8'));
 // The map geometry was never loaded here, which is why the map assertions
 // could be dropped without anything failing.
 const mapData = JSON.parse(fs.readFileSync(path.join(__dirname, 'map.json'), 'utf8'));
@@ -2761,8 +3581,8 @@ const woodOnly = Object.values(data.catalog).filter(p => p.fin && p.wine === fal
 eq('thirteen wood-only products', woodOnly.length, 13);
 eq('wood-only means no wine in any component', woodOnly.every(p =>
   p.fin.split('+').every(c => /Oak|Mizunara|Amburana/.test(c))), true);
-eq('ninety-seven wine-cask products',
-  Object.values(data.catalog).filter(p => p.wine === true).length, 97);
+eq('ninety-eight wine-cask products',
+  Object.values(data.catalog).filter(p => p.wine === true).length, 98);
 const tripleOak = Object.values(data.catalog).find(p => /Triple Oak/.test(p.name));
 eq('triple oak is finished', tripleOak.fin, 'Hungarian Oak+Chinkapin Oak+French Oak');
 eq('triple oak has no wine', tripleOak.wine, false);
@@ -2811,8 +3631,36 @@ eq('once flights are run, the bottle that unlocks one leads',
 eq('and it names the flight', runGaps[0].flight, 'PEAT IS A POSTCODE');
 // Buffalo Trace is 24 bottles with no finished bottling — a real
 // observation about the shelf that has nothing to do with flights.
-eq('the deepest house gets an extension suggestion',
-  realGaps.some(g => g.kind === 'extend' && /Buffalo Trace/.test(g.name)), true);
+// This test pinned the bug. It required the finding to NAME Buffalo Trace
+// in the thing to go and buy — and Buffalo Trace does not release a
+// finished bottling, so every search returned substitutes from other
+// houses and the finding came back for ever. The observation is sound and
+// still made; the ask is now one that can be answered.
+// This shelf raises NO house extension, and that is correct: v1.8.0 made
+// the ask category-wide — a finished Bourbon — while leaving the test
+// house-scoped, so it asked BZ for a finished bourbon while he owned 36.
+// A gap in one house is not a gap on the shelf. The behaviour is pinned on
+// a fixture instead, where the shelf genuinely lacks the thing.
+const oneHouse = {};
+[90, 92, 94, 96].forEach((pf, i) => {
+  oneHouse['h' + i] = { k: 'h' + i, name: 'H ' + i, dist: 'OneHouse',
+                        sub: 'bourbon', proof: pf, fin: null, msrp: 40 };
+});
+const oneBots = Object.keys(oneHouse).map(k => ({ id: k, k: k, status: 'open' }));
+const hGaps = L.gapsFromHouses(oneHouse, oneBots);
+eq('a house with no finish anywhere on the shelf raises it',
+  hGaps.some(g => g.kind === 'extend'), true);
+eq('the ask is answerable and does not name the house',
+  hGaps.some(g => g.kind === 'extend' && !/OneHouse/.test(g.name)), true);
+eq('the house is named in the reason',
+  hGaps.some(g => g.kind === 'extend' && /OneHouse/.test(g.why)), true);
+// And it stops once the shelf covers that axis anywhere.
+oneHouse.other = { k: 'other', name: 'Other Finished', dist: 'Elsewhere',
+                   sub: 'bourbon', proof: 95, fin: 'Oloroso', msrp: 50 };
+oneBots.push({ id: 'other', k: 'other', status: 'open' });
+eq('and stops when the shelf covers it anywhere',
+  L.gapsFromHouses(oneHouse, oneBots)
+    .some(g => /finished/i.test(g.name)), false);
 eq('every finding has a name and a reason',
   realGaps.every(g => g.name && g.why), true);
 eq('every finding is a known kind',
@@ -3026,6 +3874,167 @@ eq('no secondary sits far below its MSRP', Object.values(data.catalog)
 // that a proper noun needs.
 eq('no flight title starts lower-case',
   data.flights.map(f => L.sentenceCase(f.title)).filter(t => /^[a-z]/.test(t)), []);
+
+/* §176  Findability, and the two numbers that could never agree ----------
+ *
+ * Every expected value below was worked out by hand from the rules before
+ * the assertion was written. The allocated list is a list of names, so the
+ * expectations are the names in it and the names deliberately not in it.
+ */
+sec('§176 findability');
+
+eq('a name on the allocated list is allocated',
+  L.findability('Pappy Van Winkle 15 Year'), 'allocated');
+eq('Lot B is caught by the family name, not a Pappy-specific rule',
+  L.findability('Van Winkle Lot B 12 Year'), 'allocated');
+eq('the allocated list beats the release field',
+  L.findability('Van Winkle Lot B 12 Year', { scar: 'standard' }), 'allocated');
+eq('a standard release is on the shelf',
+  L.findability('Larceny Small Batch', { scar: 'standard' }), 'shelf');
+eq('a batched release is on the shelf',
+  L.findability('Elijah Craig Small Batch', { scar: 'batched' }), 'shelf');
+eq('a limited release is a hunt',
+  L.findability('Something Limited', { scar: 'limited' }), 'hunt');
+eq('an exclusive release is allocated',
+  L.findability('A Store Pick', { scar: 'exclusive' }), 'allocated');
+eq('a bare name with no product is unknown, not a guess',
+  L.findability('Auchentoshan 12 Year Old'), null);
+// Recognition is not availability. Raasay is obscure and sits on a shelf;
+// Weller is known to everybody and cannot be bought. If obsc ever leaks
+// into findability, these two are what catches it.
+eq('an obscure bottle is not thereby hard to find',
+  L.findability('Isle of Raasay Dun Cana', { scar: 'standard', obsc: 'obscure' }),
+  'shelf');
+eq('a well-known allocated bourbon is still allocated',
+  L.findability('Weller 12 Year', { obsc: 'known' }), 'allocated');
+
+// Unknown ranks between a hunt and an allocated release: 0 < 1 < 2 < 3.
+eq('findability ranks shelf, hunt, unknown, allocated',
+  ['shelf', 'hunt', null, 'allocated'].map(L.findRank), [0, 1, 2, 3]);
+
+sec('§177 nearest, and on which axis');
+// Worked out by hand. cand sits at 118 proof, 5 years, $25, Oloroso,
+// Islay, distillery X, bourbon.
+//   strength: C 120 (2), A 100 (18), B 92 (26)
+//   age:      C 4 (1),  A 7 (2),     B 12 (7)
+//   price:    A 30 (5) and C 20 (5) tie, so A before C by name; B 60 last
+const nprods = [
+  { name: 'A', proof: 100, age: 7,  msrp: 30, fin: 'Oloroso', region: 'Islay',
+    dist: 'X', sub: 'scotch' },
+  { name: 'B', proof: 92,  age: 12, msrp: 60, fin: 'Port',    region: 'Islay',
+    dist: 'Y', sub: 'bourbon' },
+  { name: 'C', proof: 120, age: 4,  msrp: 20, fin: 'Oloroso', region: 'Speyside',
+    dist: 'X', sub: 'bourbon' }
+];
+const ncand = { name: 'Z', proof: 118, age: 5, msrp: 25, fin: 'Oloroso',
+                region: 'Islay', dist: 'X', sub: 'bourbon' };
+const nnames = ax => L.nearestBy(ax, ncand, nprods).list.map(p => p.name);
+
+eq('strength orders by proof distance', nnames('strength'), ['C', 'A', 'B']);
+eq('age orders by years distance',      nnames('age'),      ['C', 'A', 'B']);
+eq('price orders by dollars distance, ties by name',
+  nnames('money'), ['A', 'C', 'B']);
+eq('cask keeps only the same wood',     nnames('wood'),     ['C', 'A']);
+eq('region keeps only the same region', nnames('region'),   ['A', 'B']);
+eq('distillery keeps only the same house', nnames('house'), ['C', 'A']);
+eq('category keeps only the same category', nnames('style'), ['C', 'B']);
+
+eq('the axis says what it measured',
+  L.nearestBy('strength', ncand, nprods).label, 'Nearest by strength');
+eq('a match axis with nothing matching is a finding, not an error',
+  L.nearestBy('region', { name: 'Z', region: 'Campbeltown' }, nprods).label,
+  'Nothing on your shelf shares its region');
+eq('an axis the bottle cannot be measured on returns nothing',
+  L.nearestBy('age', { name: 'Z', proof: 100 }, nprods), null);
+eq('no axis chosen means no opinion', L.nearestBy(null, ncand, nprods), null);
+// A is itself, so it drops out; B is 8 proof away and C is 20.
+eq('the bottle itself is never its own neighbour',
+  L.nearestBy('strength', { name: 'A', proof: 100 }, nprods).list
+    .map(p => p.name), ['B', 'C']);
+
+sec('§178 a paste is not a title');
+// The exact shape BZ pasted: brand, expression, then the page's furniture.
+const ofPaste = ['Old Fitzgerald',
+  '100 Proof Bottled in Bond 7 Year Old Bourbon',
+  'starstarstarstarstar', '16 reviews', 'Choose a bottle size',
+  '750ml bottle', '$79.99', 'Add to cart'].join('\n');
+eq('the name stops where the page furniture starts',
+  L.nameFromShopText(ofPaste),
+  'Old Fitzgerald 100 Proof Bottled in Bond 7 Year Old Bourbon');
+eq('a one-line paste is taken whole',
+  L.nameFromShopText('Lagavulin 16 Year Old Islay Single Malt'),
+  'Lagavulin 16 Year Old Islay Single Malt');
+eq('a price before the name yields nothing rather than a price',
+  L.nameFromShopText('$79.99\nLagavulin 16'), '');
+eq('a paragraph is a description, not a name',
+  L.nameFromShopText('A long and flowing paragraph of marketing prose that '
+    + 'runs well past any name a bottle has ever had on it'), '');
+eq('nothing in means nothing out', L.nameFromShopText(''), '');
+// What the page DID carry still has to survive the new name parser.
+const ofRead = L.readShopText(ofPaste, '');
+eq('the proof is still read off the page', ofRead.proof, 100);
+eq('the age is still read off the page', ofRead.age, 7);
+eq('bottled in bond is still read off the page', ofRead.bonded, true);
+
+sec('§179 candidates are ranked by what you can buy');
+// Five bottles come back. Sourced wins first, then findability, then the
+// cheaper one. Worked out by hand: the sourced allocated bottle leads
+// because confident outranks everything; then shelf $20, shelf $40,
+// hunt $15, allocated $10.
+// price_usd and a real source string are what the parser reads; a
+// `confident` flag with no source behind it is not confidence.
+const rawCands = { bottles: [
+  { name: 'Allocated but sourced', price_usd: 500, find: 'allocated',
+    confident: true, source: 'totalwine.com' },
+  { name: 'Allocated cheap',  price_usd: 10, find: 'allocated' },
+  { name: 'Hunt cheap',       price_usd: 15, find: 'hunt' },
+  { name: 'Shelf dear',       price_usd: 40, find: 'shelf' },
+  { name: 'Shelf cheap',      price_usd: 20, find: 'shelf' }
+] };
+eq('sourced first, then findable, then cheapest',
+  L.parseCandidates(rawCands, {}, null, { name: 'x' }).bottles.map(b => b.name),
+  ['Allocated but sourced', 'Shelf cheap', 'Shelf dear', 'Hunt cheap',
+   'Allocated cheap']);
+// Six come back and only five are kept. The one dropped must be the one
+// hardest to buy, not the cheapest — which is what the old dearest-first
+// slice was doing backwards.
+const sixCands = { bottles: [
+  { name: 'Shelf 90',  price_usd: 90, find: 'shelf' },
+  { name: 'Shelf 80',  price_usd: 80, find: 'shelf' },
+  { name: 'Shelf 70',  price_usd: 70, find: 'shelf' },
+  { name: 'Shelf 60',  price_usd: 60, find: 'shelf' },
+  { name: 'Shelf 50',  price_usd: 50, find: 'shelf' },
+  { name: 'Allocated 5', price_usd: 5, find: 'allocated' }
+] };
+eq('the bottle dropped by the cap is the one you cannot buy',
+  L.parseCandidates(sixCands, {}, null, { name: 'x' }).bottles.map(b => b.name),
+  ['Shelf 50', 'Shelf 60', 'Shelf 70', 'Shelf 80', 'Shelf 90']);
+
+sec('§180 allocated gaps stay, and stay last');
+{
+  // Two flights, each one bottle short: one wants Pappy, one wants a
+  // bottle nothing knows anything about. Both are findings; only one is
+  // something to go and buy today.
+  const gflights = [
+    { id: 'F1', title: 'Proof ladder', tag: 'variable \u00b7 proof',
+      core: [{ name: 'Pappy Van Winkle 15 Year', kind: 'wish' }] },
+    { id: 'F2', title: 'Islay run', tag: 'variable \u00b7 peat',
+      core: [{ name: 'Auchentoshan 12 Year Old', kind: 'wish' }] }
+  ];
+  const gaps = L.shelfGaps(catalog, bottles, gflights, [], [], {});
+  const named = gaps.filter(g => /Pappy|Auchentoshan/.test(g.name || ''))
+    .map(g => g.name);
+  eq('an allocated flight gap is still reported',
+    named.indexOf('Pappy Van Winkle 15 Year') >= 0, true);
+  eq('and it is reported after the one you can buy',
+    named, ['Auchentoshan 12 Year Old', 'Pappy Van Winkle 15 Year']);
+  eq('every allocated gap sits after every gap that is not',
+    gaps.map(g => g.find === 'allocated' ? 1 : 0)
+      .every((v, i, a) => i === 0 || a[i - 1] <= v), true);
+  eq('the tag travels with the gap',
+    (gaps.find(g => g.name === 'Pappy Van Winkle 15 Year') || {}).find,
+    'allocated');
+}
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
