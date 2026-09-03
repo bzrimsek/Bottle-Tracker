@@ -94,7 +94,12 @@ function suggestBottles(req) {
     '2b. An empty bottles array is a valid and useful answer. A substitute',
     '    from another distillery is not — it will be rejected before it is',
     '    shown, so it wastes the answer.',
-    '3. Prefer bottles under the stated budget. An expensive famous bottle',
+    '3. Prefer bottles under the stated budget, but NEVER return an empty',
+    '   list because of price. If nothing fits the budget, return the',
+    '   cheapest bottles that fit the GAP and let the app say they are over.',
+    '   An empty answer tells somebody the thing does not exist; a dear one',
+    '   tells them what it would cost, which is the question they asked.',
+    '3b. An expensive famous bottle',
     '   is the useless answer to every question; a good cheap one that',
     '   actually fills the gap is the useful one.',
     '4. why is one line saying what THIS bottle brings to that gap,',
@@ -133,7 +138,12 @@ function suggestBottles(req) {
     'THE GAP: ' + (req.gap || ''),
     req.why ? 'WHY IT MATTERS: ' + req.why : '',
     must.length ? '\nHARD CONSTRAINTS:\n' + must.join('\n') : '',
-    req.budget ? '\nBUDGET: at or under $' + req.budget : '\nBUDGET: under $80',
+    req.axis ? '\nDIMENSION: the person is exploring ' + req.axis
+             + '. Every suggestion must move them along THAT axis.' : '',
+    req.budget ? '\nBUDGET: aim at or under $' + req.budget
+               + '. If nothing fits, return the cheapest that fits the gap '
+               + 'anyway and say so in why.'
+               : '\nBUDGET: aim under $80, but return something regardless.',
     '',
     'ALREADY OWNED in this corner of the shelf, do not suggest these:',
     owned || '(nothing)'
