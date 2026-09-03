@@ -4995,5 +4995,238 @@ sec('§199 a typed name is cased like the shelf');
   eq('no back label reads as a mid-sentence fragment', lower, []);
 }
 
+/* §200  a first load may not replace newer local work -------------------
+ *
+ * BZ bought a bottle and added it to a flight. Both vanished; the whisky
+ * stayed in the shared library, and the shelf showed 326 with no row for it.
+ *
+ * The mechanism, read off the code rather than guessed: bottles, history and
+ * customFlights are NOT in SYNC_MERGE, and mergeSyncValue returns the REMOTE
+ * copy for anything not in that list — unconditionally, whatever the ages.
+ * `custom` merges, so the whisky survived; the library lives on the server,
+ * so that survived too. The bottle and the pour were in the two arrays that
+ * get replaced, and the push had not landed, so an older account copy came
+ * back over them. The evidence that settled it: the flight came back with
+ * NUMBERED pours and a gap where the fifth was — an older cast of that
+ * flight, not a damaged current one.
+ *
+ * The rule is now: the newer copy wins, and where the ages cannot be
+ * compared the remote wins as it always did. Local holds only when it is
+ * provably newer, which is exactly the case that was losing work.
+ */
+sec('§200 a first load may not replace newer local work');
+{
+  // Plain ordering. 2000 is later than 1000.
+  eq('a newer account copy lands', L.syncDecision(1000, 2000), 'remote');
+  eq('a newer local copy holds', L.syncDecision(2000, 1000), 'local');
+  eq('a tie goes to the account, as it always did',
+    L.syncDecision(1500, 1500), 'remote');
+
+  // The two cases where there is nothing to compare. Both keep the old
+  // behaviour, because a device that has never saved has nothing to lose
+  // and an account written before the stamp existed cannot be dated.
+  eq('a device that has never saved takes the account',
+    L.syncDecision(0, 2000), 'remote');
+  eq('an account with no stamp still lands',
+    L.syncDecision(2000, 0), 'remote');
+  eq('neither stamped', L.syncDecision(0, 0), 'remote');
+  eq('nothing passed at all', L.syncDecision(undefined, undefined), 'remote');
+
+  /* THE PAIRING, stated as the fault: this device saved at 5000, the
+     account was last written at 4000, and the local arrays hold a bottle
+     the account has never seen. Ask the decision, then apply the same
+     skip the loader applies, and the bottle must still be there. */
+  const localBottles = [{ id: 'B345', k: 'Ardbeg 10', status: 'open' },
+                        { id: 'B346', k: 'Weller 12', status: 'open' }];
+  const remoteBottles = [{ id: 'B345', k: 'Ardbeg 10', status: 'open' }];
+  const winner = L.syncDecision(5000, 4000);
+  eq('the device that bought it wins', winner, 'local');
+  const applied = (winner === 'local' && L.SYNC_MERGE.indexOf('bottles') < 0)
+    ? localBottles : L.mergeSyncValue('bottles', localBottles, remoteBottles);
+  eq('and the bottle it just bought is still there',
+    applied.map(b => b.id), ['B345', 'B346']);
+
+  // The other direction still works, or a genuine second device could never
+  // hand anything over.
+  const winner2 = L.syncDecision(4000, 5000);
+  const applied2 = (winner2 === 'local' && L.SYNC_MERGE.indexOf('bottles') < 0)
+    ? localBottles : L.mergeSyncValue('bottles', localBottles, remoteBottles);
+  eq('an older device takes the account copy',
+    applied2.map(b => b.id), ['B345']);
+
+  // Merge keys are unaffected either way: they were never the problem.
+  eq('custom still merges when local is newer',
+    L.mergeSyncValue('custom', { a: 1 }, { b: 2 }), { a: 1, b: 2 });
+
+  /* And the state a half-applied sync leaves: a bottle whose whisky is not
+     in the catalogue. It is on no screen — the shelf iterates products and
+     skips any with no bottles — so it has to be reported somewhere. */
+  eq('a bottle with no whisky is found',
+    L.orphanBottles([{ id: 'B346', k: 'gone one', status: 'open' },
+                     { id: 'B345', k: 'Ardbeg 10', status: 'open' }],
+      { 'Ardbeg 10': { k: 'Ardbeg 10' } }).map(b => b.id), ['B346']);
+  eq('a bottle already retired is not an orphan',
+    L.orphanBottles([{ id: 'B9', k: 'gone one', status: 'gone' }], {}), []);
+  eq('a whole shelf that matches has none',
+    L.orphanBottles([{ id: 'B345', k: 'Ardbeg 10', status: 'open' }],
+      { 'Ardbeg 10': { k: 'Ardbeg 10' } }), []);
+}
+
+/* §201  finding the bottles that arrived most recently -----------------
+ *
+ * There was no acquisition date at all. Nothing in the Only Drams export
+ * carried one, and the 344 from the audit came in as one batch with ids in
+ * ALPHABETICAL order — so id order is not arrival order for any of them and
+ * cannot be made to stand in for it.
+ *
+ * A bottle now stamps the day it showed up, by upload or by purchase. The
+ * 344 stay undated on purpose: they arrived together, and inventing an
+ * order for them would be a fiction that reads like a fact. They fall to
+ * the bottom together, by name.
+ *
+ * Expected orders below were worked out by hand from the fixture.
+ */
+sec('§201 sorting the shelf by when a bottle arrived');
+{
+  const bottles = [
+    { id: 'B001', k: 'Old A', status: 'open' },          // from the audit
+    { id: 'B002', k: 'Old B', status: 'open' },
+    { id: 'B345', k: 'New One', status: 'open', got: '2026-09-01' },
+    { id: 'B346', k: 'Newest', status: 'open', got: '2026-09-03' },
+    { id: 'B347', k: 'Newest', status: 'sealed', got: '2026-08-01' }
+  ];
+  const products = ['Old A', 'Old B', 'New One', 'Newest']
+    .map(n => ({ k: n, name: n }));
+
+  // The NEWEST bottle of a whisky decides where the whisky sits. Newest
+  // holds two: 2026-09-03 and 2026-08-01, and the later one wins.
+  eq('the newest bottle of each whisky',
+    L.newestOwned(bottles).Newest, { got: '2026-09-03', seq: 346 });
+  eq('an undated bottle keeps its sequence and no date',
+    L.newestOwned(bottles)['Old A'], { got: '', seq: 1 });
+
+  eq('newest first, undated last by name',
+    L.shelfSort(products, 'got', bottles).map(p => p.name),
+    ['Newest', 'New One', 'Old A', 'Old B']);
+
+  // Two on the same day fall back to the order they were added, not to name.
+  const sameDay = [
+    { id: 'B400', k: 'Zed', status: 'open', got: '2026-09-03' },
+    { id: 'B401', k: 'Alpha', status: 'open', got: '2026-09-03' }
+  ];
+  eq('two on one day sort by which came second',
+    L.shelfSort([{ k: 'Zed', name: 'Zed' }, { k: 'Alpha', name: 'Alpha' }],
+      'got', sameDay).map(p => p.name), ['Alpha', 'Zed']);
+
+  // A bottle drunk and retired does not date the whisky.
+  eq('a retired bottle does not count',
+    L.newestOwned([{ id: 'B500', k: 'X', status: 'gone', got: '2026-09-09' },
+                   { id: 'B501', k: 'X', status: 'open', got: '2026-01-01' }]).X,
+    { got: '2026-01-01', seq: 501 });
+
+  // Every other sort is untouched, and none of them needs the bottles.
+  eq('name is still name',
+    L.shelfSort(products, 'name', bottles).map(p => p.name),
+    ['New One', 'Newest', 'Old A', 'Old B']);
+  eq('and the sort is offered on the shelf',
+    L.SORTS.filter(x => x.id === 'got').map(x => x.label), ['Recently added']);
+
+  // A new bottle carries the date without any site having to remember to
+  // add it — five sites create bottles and all five go through this.
+  const made = L.newBottle([{ id: 'B001' }], 'Ardbeg 10', 'open', 59.99);
+  eq('a new bottle is stamped', made.got, L.today());
+  eq('and numbered after the last one', made.id, 'B002');
+  eq('and carries what it cost', made.paid, 59.99);
+  eq('the date is a plain day', /^\d{4}-\d{2}-\d{2}$/.test(L.today()), true);
+}
+
+/* §202  what a flight is actually asking, and what may be added to it ---
+ *
+ * The Add a pour picker offered all 319 open bottles in ASCENDING PROOF,
+ * which reads as no order at all when you are looking for a name.
+ *
+ * Sorting it was the easy half. The other half — leading with the bottles
+ * that suit the flight — turned up a fault underneath: variableOfId
+ * concatenated tag and title and tested proof FIRST, and "PROOF ASCENDS" is
+ * a house rule on nearly every tag BZ writes rather than the question being
+ * asked. Eleven of the thirty-six flights came back "proof" wrongly, Remix
+ * included, which nothing would have shown from the outside.
+ *
+ * Order now: an explicit ONE VARIABLE declaration, then the title, then the
+ * rest of the tag. The middle step alone would have broken a fixture titled
+ * "A RYE FLIGHT" whose tag states ONE VARIABLE: PROOF — a title can name
+ * what is HELD rather than what is asked, which is why the declaration
+ * outranks it.
+ */
+sec('§202 what a flight is asking');
+{
+  eq('a stated variable outranks the title',
+    L.variableOfId({ title: 'A RYE FLIGHT',
+                     tag: '6 core \u00b7 ALL BLIND \u00b7 ONE VARIABLE: PROOF' }),
+    'proof');
+  eq('the title outranks the mechanics in the tag',
+    L.variableOfId({ title: 'WHEAT, TURNED UP',
+                     tag: 'WHEAT SCRAMBLED, PROOF ASCENDS' }), 'grain');
+  eq('an age flight is not a proof flight',
+    L.variableOfId({ title: 'NO AGE STATED', tag: 'PROOF ASCENDS' }), 'age');
+  eq('nor is a price one',
+    L.variableOfId({ title: 'IS IT WORTH $100 MORE?',
+                     tag: 'PROOF ASCENDS' }), 'price');
+  eq('the tag still answers when the title says nothing',
+    L.variableOfId({ title: 'FOUR OF A KIND',
+                     tag: 'ALL BLIND, PROOF ASCENDS' }), 'proof');
+  eq('and a flight that names no variable says so',
+    L.variableOfId({ title: 'FOUR OF A KIND', tag: 'ALL BLIND' }), null);
+
+  /* The picker itself. Alphabetical, never offering what is already a pour,
+     and split so the ones that can sit on the flight's axis come first. */
+  const cat = {
+    'Ardbeg 10': { k: 'Ardbeg 10', name: 'Ardbeg 10', sub: 'scotch', age: 10 },
+    'Zed Rye': { k: 'Zed Rye', name: 'Zed Rye', sub: 'rye', age: 4 },
+    'Aged Nothing': { k: 'Aged Nothing', name: 'Aged Nothing', sub: 'rye' },
+    'In The Flight': { k: 'In The Flight', name: 'In The Flight', sub: 'rye', age: 8 }
+  };
+  const bottles = Object.keys(cat)
+    .map((k, i) => ({ id: 'B' + (i + 1), k: k, status: 'open' }));
+  const f = { title: 'NO AGE STATED', tag: '', core: [{ k: 'In The Flight' }] };
+  const o = L.pourOptions(f, cat, bottles);
+
+  eq('the variable is read off the flight', o.variable, 'age');
+  eq('what fits, in alphabetical order', o.fits.map(p => p.name),
+    ['Ardbeg 10', 'Zed Rye']);
+  eq('a bottle with no age cannot sit in an age flight, but is still offered',
+    o.rest.map(p => p.name), ['Aged Nothing']);
+  eq('and a pour already in the flight is offered nowhere',
+    o.fits.concat(o.rest).some(p => p.k === 'In The Flight'), false);
+
+  // Where the cast agrees on a type, that agreement travels — the rule
+  // recastFlight already uses, so an all-rye flight is not offered Scotch.
+  const allRye = { title: 'NO AGE STATED', tag: '',
+                   core: [{ k: 'a' }, { k: 'b' }, { k: 'c' }] };
+  const ryeCat = Object.assign({}, cat, {
+    a: { k: 'a', name: 'A', sub: 'rye', age: 5 },
+    b: { k: 'b', name: 'B', sub: 'rye', age: 6 },
+    c: { k: 'c', name: 'C', sub: 'rye', age: 7 }
+  });
+  const o2 = L.pourOptions(allRye, ryeCat, bottles);
+  eq('a uniform cast holds its type', o2.held, 'rye');
+  // The two open ryes that state an age. Ardbeg is Scotch and drops out;
+  // Aged Nothing is rye with no age and cannot sit on the axis.
+  eq('so the Scotch drops out of what fits', o2.fits.map(p => p.name),
+    ['In The Flight', 'Zed Rye']);
+  eq('and is still reachable below',
+    o2.rest.map(p => p.name).indexOf('Ardbeg 10') >= 0, true);
+
+  // A flight with no readable variable offers everything, rather than
+  // nothing, which is the failure that would empty the picker.
+  const noVar = L.pourOptions({ title: 'FOUR OF A KIND', tag: '', core: [] },
+    cat, bottles);
+  eq('no variable means nothing is filtered out',
+    noVar.fits.length + noVar.rest.length, 4);
+  eq('and they are still in alphabetical order',
+    noVar.rest.map(p => p.name),
+    ['Aged Nothing', 'Ardbeg 10', 'In The Flight', 'Zed Rye']);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
