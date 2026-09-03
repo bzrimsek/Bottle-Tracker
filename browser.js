@@ -1,0 +1,759 @@
+/* Load the real app in a real browser, with the real data, and walk it.
+ *
+ * Three builds went out today that would not start or were visibly broken,
+ * and BZ found every one after deploying. Each was a RUNTIME fault nothing
+ * here could reach: a const read before its declaration, a duplicate CSS
+ * rule that dropped the nav off the bottom, an element detached from the
+ * document so every lookup inside it returned null.
+ *
+ * node --check parses. The smoke test runs the script against a stub DOM
+ * that resolves almost anything. Neither is the thing BZ is running. This
+ * is: same file, same data, same browser engine, and it fails the build
+ * rather than the phone.
+ *
+ *   node browser.js [index.html]
+ */
+const { chromium } = require('playwright');
+const path = require('path');
+const fs = require('fs');
+
+const file = path.resolve(process.argv[2] || 'index.html');
+const dir = path.dirname(file);
+
+// Every screen in the tab bar, plus the ones reached from inside.
+const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
+
+(async () => {
+  const failures = [];
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 390, height: 780 } });
+
+  // A page error is the class that reached BZ: it throws at runtime and
+  // the app either fails to start or a screen never draws.
+  page.on('pageerror', e => failures.push('threw: ' + e.message));
+  page.on('console', m => {
+    if (m.type() === 'error') {
+      const t = m.text();
+      // The service worker and Firebase are not present offline; those are
+      // expected and not what this is looking for.
+      // A 403 on the service worker is this harness, not the app: a fake
+      // origin cannot register one. Everything else is real.
+      if (!/service worker|firebase|favicon|net::ERR|status of 403/i.test(t)) {
+        failures.push('console error: ' + t.slice(0, 120));
+      }
+    }
+  });
+
+  // A fake origin, so fetch works. Everything under it is served from the
+  // folder the file lives in.
+  await page.route('http://app.local/**', route => {
+    const name = route.request().url().split('app.local/')[1].split('?')[0]
+      || path.basename(file);
+    const p = path.join(dir, name);
+    if (!fs.existsSync(p)) return route.fulfill({ status: 404, body: '' });
+    const type = name.endsWith('.json') ? 'application/json'
+      : name.endsWith('.js') ? 'text/javascript'
+      : name.endsWith('.png') ? 'image/png' : 'text/html';
+    return route.fulfill({ status: 200, contentType: type,
+                           body: fs.readFileSync(p) });
+  });
+
+  // data.json beside the file, served from disk.
+  await page.route('**/data.json', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: fs.readFileSync(path.join(dir, 'data.json'), 'utf8')
+  }));
+  await page.route('**/map.json', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: fs.existsSync(path.join(dir, 'map.json'))
+      ? fs.readFileSync(path.join(dir, 'map.json'), 'utf8') : '{}'
+  }));
+
+  // Served over http, not file://. A file:// page cannot fetch its own
+  // data.json — the scheme is not supported — so the app loads with an
+  // empty shelf and every check below tests the wrong thing.
+  await page.goto('http://app.local/' + path.basename(file));
+  await page.waitForTimeout(1200);
+
+  // The shipped data.json holds 0 bottles on purpose — a new user starts
+  // with an empty shelf — so every check below would be testing an empty
+  // app. BZ's own bottles and flights sit beside it and are loaded here,
+  // because the faults that reached him were on screens with 325 rows.
+  const bots = path.join(dir, 'bz-bottles.json');
+  const flts = path.join(dir, 'bz-flights.json');
+  if (fs.existsSync(bots)) {
+    await page.evaluate(([b, f]) => {
+      /* global S, save_, rebuildCatalog, renderShelf, renderShelfFilters,
+                renderHome, renderFlights */
+      S.bottles = b;
+      if (f) S.customFlights = f;
+      save_();
+      rebuildCatalog();
+      renderShelf(); renderShelfFilters(); renderHome();
+    }, [JSON.parse(fs.readFileSync(bots, 'utf8')),
+        fs.existsSync(flts) ? JSON.parse(fs.readFileSync(flts, 'utf8')) : null]);
+    await page.waitForTimeout(600);
+  }
+
+  // 1. Did it start? The banner is what BZ saw twice today.
+  const banner = await page.locator('text=/failed to start/i').count();
+  if (banner) {
+    const msg = await page.locator('text=/failed to start/i').first().textContent();
+    failures.push('DID NOT START: ' + msg.trim().slice(0, 120));
+  }
+
+  // 2. Every tab draws, and the nav survives it. The nav went missing on a
+  //    phone and nothing here noticed, because nothing here was a phone.
+  for (const tab of TABS) {
+    const btn = page.locator('nav button[data-scr="' + tab + '"]');
+    if (!(await btn.count())) { failures.push('no nav button for ' + tab); continue; }
+    await btn.click();
+    await page.waitForTimeout(220);
+
+    const screen = page.locator('#scr-' + tab);
+    if (!(await screen.isVisible())) failures.push(tab + ': screen not visible');
+
+    // The bar has to be ON the glass, not below it.
+    const nav = await page.locator('nav').boundingBox();
+    const vh = page.viewportSize().height;
+    if (!nav) failures.push(tab + ': nav has no box');
+    else if (nav.y + nav.height > vh + 2) {
+      failures.push(tab + ': nav is off the bottom by '
+        + Math.round(nav.y + nav.height - vh) + 'px');
+    }
+
+    // A screen that draws nothing is a screen that threw quietly.
+    const text = (await screen.innerText()).trim();
+    if (text.length < 12) failures.push(tab + ': screen is empty');
+  }
+
+  // 3. The shelf actually lists bottles, and its header lines up with them.
+  await page.locator('nav button[data-scr="shelf"]').click();
+  await page.waitForTimeout(250);
+  const tiles = await page.locator('#shelfList .tile').count();
+  if (!tiles) failures.push('shelf: no type tiles');
+  else {
+    await page.locator('#shelfList .tile').first().click();
+    await page.waitForTimeout(250);
+    const rows = await page.locator('#shelfList .item').count();
+    if (rows < 2) failures.push('shelf: a type shows no rows');
+    const head = await page.locator('.listhead').boundingBox();
+    const row = await page.locator('#shelfList .item').first().boundingBox();
+    if (head && row && Math.abs(head.x - row.x) > 2) {
+      failures.push('shelf: header and rows are '
+        + Math.round(Math.abs(head.x - row.x)) + 'px out of line');
+    }
+  }
+
+  // 4. Shopping asks its question, and answering it draws something.
+  await page.locator('nav button[data-scr="shop"]').click();
+  await page.waitForTimeout(250);
+  // Back to the question first: an earlier pass through the tabs may have
+  // answered it, and the answer is remembered on purpose.
+  const chg = page.locator('#scr-shop .chip').filter({ hasText: 'Change' });
+  if (await chg.count()) { await chg.first().click(); await page.waitForTimeout(300); }
+
+  const choices = await page.locator('.modechoice').count();
+  if (choices !== 3) failures.push('shop: ' + choices + ' situations offered, want 3');
+  else {
+    // Each situation in turn. Reaching the question again means pressing
+    // Change, because the answer is remembered — which is the point of it.
+    for (let i = 0; i < 3; i++) {
+      if (!(await page.locator('.modechoice').count())) {
+        const back = page.locator('#scr-shop .chip').filter({ hasText: 'Change' });
+        if (await back.count()) {
+          await back.first().click();
+          await page.waitForTimeout(250);
+        }
+      }
+      if (!(await page.locator('.modechoice').count())) {
+        failures.push('shop: cannot get back to the question');
+        break;
+      }
+      await page.locator('.modechoice').nth(i).click();
+      await page.waitForTimeout(400);
+      const body = (await page.locator('#scr-shop').innerText()).trim();
+      if (body.length < 40) {
+        failures.push('shop: situation ' + (i + 1) + ' draws nothing');
+      }
+    }
+  }
+
+  // 4b. Pasting a page and getting a bottle out of it.
+  //
+  //     What BZ saw: a bottle named "Old Fitzgerald100 Proof Bottled in
+  //     Bond 7 Year Old Bourbon starstarstarstarstar16 reviews...", a
+  //     header claiming he was standing in a shop, and a verdict built on
+  //     none of it. The name parser was being fed 160 characters of page
+  //     BODY by a function written for a <title>. Nothing above could
+  //     reach it, because it only happens after a real paste into a real
+  //     textarea.
+  {
+    const chg2 = page.locator('#scr-shop .chip').filter({ hasText: 'Change' });
+    await page.locator('nav button[data-scr="shop"]').click();
+    await page.waitForTimeout(250);
+    if (await chg2.count()) { await chg2.first().click(); await page.waitForTimeout(300); }
+    const modes = page.locator('.modechoice');
+    if ((await modes.count()) === 3) {
+      await modes.nth(2).click();               // looking at it on a website
+      await page.waitForTimeout(300);
+      const ta = page.locator('#scr-shop textarea').first();
+      if (!(await ta.count())) {
+        failures.push('paste: no textarea on the website situation');
+      } else {
+        await ta.fill(['Old Fitzgerald',
+          '100 Proof Bottled in Bond 7 Year Old Bourbon',
+          'starstarstarstarstar', '16 reviews', 'Choose a bottle size',
+          '750ml bottle', '$79.99', 'Add to cart'].join('\n'));
+        await page.locator('#scr-shop button', { hasText: 'Read it' })
+          .first().click();
+        await page.waitForTimeout(600);
+
+        const q = await page.locator('#shopQ').inputValue();
+        if (/star|reviews|Choose a bottle/i.test(q)) {
+          failures.push('paste: page furniture ended up in the name: '
+            + q.slice(0, 60));
+        }
+        if (!/^Old Fitzgerald 100 Proof/.test(q)) {
+          failures.push('paste: name came out as ' + JSON.stringify(q.slice(0, 60)));
+        }
+        const modeLine = (await page.locator('#scr-shop .hdr .sub').first()
+          .textContent()) || '';
+        if (/in a store/i.test(modeLine)) {
+          failures.push('paste: header still claims you are in a store');
+        }
+        const shopText = await page.locator('#scr-shop').innerText();
+        if (!/100 proof/i.test(shopText)) {
+          failures.push('paste: the proof the page printed never reached '
+            + 'the bottle view');
+        }
+      }
+    }
+  }
+
+  // 5. A bottle opens from the shelf, which is the commonest thing anybody
+  //    does and the one that leaves the tab bar behind.
+  await page.locator('nav button[data-scr="shelf"]').click();
+  await page.waitForTimeout(250);
+  if (await page.locator('#shelfList .tile').count()) {
+    await page.locator('#shelfList .tile').first().click();
+    await page.waitForTimeout(200);
+  }
+  if (await page.locator('#shelfList .item').count()) {
+    await page.locator('#shelfList .item').first().click();
+    await page.waitForTimeout(300);
+    if (!(await page.locator('#scr-detail').isVisible())) {
+      failures.push('a bottle does not open from the shelf');
+    }
+    const backs = await page.locator('#scr-detail .backbtn:visible').count();
+    if (!backs) failures.push('the bottle screen has no way back');
+  }
+
+  // 6. The six home summary tiles hold one row at every width, and none of
+  //    them widens the page.
+  //
+  //    Six columns across a 360px phone leaves each number about 40px of
+  //    room, and "$32,807" does not break. A track that cannot shrink pushes
+  //    the document wider than the viewport; body{overflow:hidden} then
+  //    clips the last child of the flex column, which is the nav. That is
+  //    the disappearing tab bar, and it has arrived by three different
+  //    routes now. This walks the widths and fails on the first one where
+  //    the value overflows its tile, the page overflows the window, or the
+  //    row breaks in two.
+  await page.locator('nav button[data-scr="home"]').click();
+  await page.waitForTimeout(300);
+  for (const w of [360, 390, 430, 500, 600, 699, 700, 820, 1200]) {
+    await page.setViewportSize({ width: w, height: 780 });
+    await page.waitForTimeout(200);
+    const t = await page.evaluate(() => {
+      const wrap = document.querySelector('#homeBody > .tiles');
+      if (!wrap) return null;
+      const tiles = [...wrap.children];
+      const tops = new Set(tiles.map(x => Math.round(x.getBoundingClientRect().top)));
+      const worst = tiles.reduce((a, x) => {
+        const v = x.querySelector('.v');
+        const over = v.scrollWidth - v.clientWidth;
+        return over > a.over ? { over, text: v.textContent } : a;
+      }, { over: 0, text: '' });
+      const nav = document.querySelector('nav').getBoundingClientRect();
+      return {
+        count: tiles.length,
+        rows: tops.size,
+        over: worst.over,
+        text: worst.text,
+        pageOver: document.documentElement.scrollWidth - window.innerWidth,
+        navBottom: Math.round(nav.bottom),
+        vh: window.innerHeight
+      };
+    });
+    if (!t) { failures.push('home: no summary tiles'); break; }
+    if (t.rows !== 1) {
+      failures.push('home tiles at ' + w + 'px: ' + t.rows + ' rows, want 1');
+    }
+    if (t.over > 0) {
+      failures.push('home tiles at ' + w + 'px: ' + JSON.stringify(t.text)
+        + ' overflows its tile by ' + t.over + 'px');
+    }
+    if (t.pageOver > 0) {
+      failures.push('home tiles at ' + w + 'px: page is ' + t.pageOver
+        + 'px wider than the window');
+    }
+    if (t.navBottom > t.vh + 2) {
+      failures.push('home tiles at ' + w + 'px: nav pushed '
+        + (t.navBottom - t.vh) + 'px off the bottom');
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 780 });
+
+  // 7. The log: pours on Taste, flights on Flights, and an X on every row.
+  //
+  //    Three things that can only be checked with a real click. The X calls
+  //    stopPropagation — without it every removal also opened the bottle —
+  //    and Undo lives in a toast that has to still be on the glass when it
+  //    is pressed. The split matters because one array feeds both screens:
+  //    a removal on one used to leave the other showing the entry still
+  //    there.
+  {
+    const seeded = await page.evaluate(() => {
+      /* global S, save_, allFlights, renderHome, renderFlights,
+                renderHistory, renderPayline */
+      const k = Object.keys(S.catalog).slice(0, 2);
+      const f = allFlights()[0];
+      if (k.length < 2 || !f) return null;
+      S.history = [
+        { kind: 'pour', k: k[0], at: '2026-09-01' },
+        { kind: 'pour', k: k[1], at: '2026-09-02' },
+        { kind: 'flight', flight: f.title, at: '2026-09-02',
+          pours: [{ k: k[0] }, { k: k[1] }] }
+      ];
+      save_(); renderHome(); renderFlights(); renderHistory(); renderPayline();
+      return { title: f.title };
+    });
+
+    if (!seeded) {
+      failures.push('log: could not seed a pour and a run');
+    } else {
+      await page.locator('nav button[data-scr="pour"]').click();
+      await page.waitForTimeout(350);
+
+      if (await page.locator('#histBody .bars').count()) {
+        failures.push('log: the month bars are still on the pour log');
+      }
+      const pourRows = await page.locator('#histBody .recent .item').count();
+      if (pourRows !== 2) {
+        failures.push('log: ' + pourRows + ' rows on the pour log, want 2 '
+          + '(the run belongs on Flights)');
+      }
+      if (await page.locator('#histBody .dismiss').count() !== pourRows) {
+        failures.push('log: not every pour row has an X');
+      }
+
+      await page.locator('nav button[data-scr="flights"]').click();
+      await page.waitForTimeout(450);
+      const runRows = await page.locator('#flightList .recent .item').count();
+      if (runRows !== 1) {
+        failures.push('flights: ' + runRows + ' rows in the run log, want 1');
+      }
+      if (!/Flights you have run/.test(await page.locator('#flightList').innerText())) {
+        failures.push('flights: the run log has no heading');
+      }
+
+      // The X, and the navigation it must NOT do.
+      if (runRows) {
+        await page.locator('#flightList .dismiss').first().click();
+        await page.waitForTimeout(400);
+        if (await page.locator('#scr-detail').isVisible()) {
+          failures.push('flights: the X opened the flight as well as '
+            + 'removing it');
+        }
+        if (await page.locator('#flightList .recent .item').count()) {
+          failures.push('flights: the X did not remove the run');
+        }
+
+        // Undo, from the toast, and back to where it came from.
+        const undo = page.locator('#toast .toastact');
+        if (!(await undo.count())) {
+          failures.push('flights: removing a run offers no Undo');
+        } else {
+          await undo.first().click();
+          await page.waitForTimeout(400);
+          if (await page.locator('#flightList .recent .item').count() !== 1) {
+            failures.push('flights: Undo did not put the run back');
+          }
+        }
+      }
+
+      // The pours are untouched by any of that.
+      await page.locator('nav button[data-scr="pour"]').click();
+      await page.waitForTimeout(350);
+      if (await page.locator('#histBody .recent .item').count() !== 2) {
+        failures.push('log: removing a run changed the pour log');
+      }
+    }
+  }
+
+  // 7. A host line typed into the flight editor is still there after a save.
+  //
+  //    The line per pour is the only place a flight says anything about a
+  //    particular bottle, and nothing could write one: Save flight rebuilt
+  //    the cards from the catalogue every time. The logic is tested in
+  //    §198; this is the wiring — that the field exists, that what is typed
+  //    reaches the pour, and that pressing Save does not throw it away.
+  {
+    await page.locator('nav button[data-scr="flights"]').click();
+    await page.waitForTimeout(400);
+    const card = page.locator('#scr-flights .fcard').first();
+    if (!(await card.count())) {
+      failures.push('flights: no flight cards to open');
+    } else {
+      await card.click();
+      await page.waitForTimeout(350);
+      const edit = page.locator('#scr-detail button', { hasText: /^Edit$/ }).first();
+      if (!(await edit.count())) {
+        failures.push('flight editor: no Edit button on a flight');
+      } else {
+        await edit.click();
+        await page.waitForTimeout(350);
+        const notes = page.locator('.pourrow .pnote');
+        const n = await notes.count();
+        if (!n) {
+          failures.push('flight editor: no host line field on any pour');
+        } else {
+          const typed = 'HOST LINE UNDER TEST';
+          await notes.first().fill(typed);
+          await page.locator('.modal button', { hasText: 'Save flight' })
+            .first().click();
+          await page.waitForTimeout(500);
+
+          await page.locator('#scr-detail button', { hasText: /^Edit$/ })
+            .first().click();
+          await page.waitForTimeout(400);
+          const back = await page.locator('.pourrow .pnote').first().inputValue();
+          if (back !== typed) {
+            failures.push('flight editor: the host line did not survive a save, '
+              + 'came back as ' + JSON.stringify(back.slice(0, 40)));
+          }
+          const cancel = page.locator('.modal button', { hasText: 'Cancel' }).first();
+          if (await cancel.count()) { await cancel.click(); await page.waitForTimeout(200); }
+        }
+      }
+    }
+  }
+
+  // 8. Shopping: typing survives, the actions are on the glass, buy buys.
+  //
+  //    Three faults in one screen. renderShop lifted the search row out of
+  //    a container it then emptied and appended it back — moving a focused
+  //    input blurs it, so every keystroke ended the typing and a name came
+  //    out as one letter. It also ran a full render per character, and the
+  //    render walks the shelf. And Want it / I bought it lived inside a
+  //    collapsed fold labelled "Correct these details", which is not where
+  //    anybody looks for the buy button.
+  {
+    await page.locator('nav button[data-scr="shop"]').click();
+    await page.waitForTimeout(300);
+    const chg3 = page.locator('#scr-shop .chip').filter({ hasText: 'Change' });
+    if (await chg3.count()) { await chg3.first().click(); await page.waitForTimeout(300); }
+    const modes3 = page.locator('.modechoice');
+    if ((await modes3.count()) !== 3) {
+      failures.push('shop: cannot reach the situation question');
+    } else {
+      await modes3.nth(0).click();              // in a store, holding a bottle
+      await page.waitForTimeout(350);
+
+      // Typed one key at a time, the way a phone types. Anything that
+      // blurs the box loses the rest of the word.
+      const typed = 'Glenfarclas 105';
+      await page.locator('#shopQ').fill('');
+      await page.locator('#shopQ').click();
+      await page.type('#shopQ', typed, { delay: 40 });
+      // Long enough for the debounced redraw AND the auto-lookup that fires
+      // 900ms after the last keystroke — otherwise the lookup's own message
+      // lands on top of whatever is being asserted below.
+      await page.waitForTimeout(1500);
+
+      const held = await page.locator('#shopQ').inputValue();
+      if (held !== typed) {
+        failures.push('shop: typing ' + JSON.stringify(typed)
+          + ' left ' + JSON.stringify(held));
+      }
+      const stillFocused = await page.evaluate(() =>
+        document.activeElement && document.activeElement.id === 'shopQ');
+      if (!stillFocused) failures.push('shop: the box lost focus while typing');
+
+      // The pills say what they are for.
+      if (!(await page.locator('#scr-shop .dimcap').count())) {
+        failures.push('shop: the axis pills have no caption');
+      }
+
+      // Both actions on the glass, no fold to open first.
+      for (const label of ['Want it', 'I bought it']) {
+        const b = page.locator('#scr-shop button', { hasText: label }).first();
+        if (!(await b.count()) || !(await b.isVisible())) {
+          failures.push('shop: "' + label + '" is not visible');
+        }
+      }
+      if (await page.locator('#shopFixed details').count()) {
+        failures.push('shop: the details are still behind a fold');
+      }
+
+      // And the details sit above the verdict, under the name.
+      const order = await page.evaluate(() => {
+        const fixed = document.getElementById('shopFixed');
+        const form = fixed.querySelector('.shopform');
+        const verdict = fixed.querySelector('.verdict');
+        if (!form || !verdict) return null;
+        return form.compareDocumentPosition(verdict)
+          & Node.DOCUMENT_POSITION_FOLLOWING ? 'form first' : 'verdict first';
+      });
+      if (order !== 'form first') {
+        failures.push('shop: the details are not under the name block ('
+          + order + ')');
+      }
+
+      // A buy that cannot go through has to SAY so and point at the field
+      // it wants. It used to flash a toast over a screen with no proof
+      // field on it, which is indistinguishable from a button that does
+      // nothing.
+      const before = await page.evaluate(() => S.bottles.length);
+      await page.locator('#scr-shop button', { hasText: 'I bought it' })
+        .first().click();
+      await page.waitForTimeout(400);
+      const refused = await page.evaluate(() => {
+        const n = document.querySelector('#shopFixed .looknote');
+        const bad = document.querySelector('#shopFixed .field.needed');
+        return { msg: n ? n.textContent.trim() : '',
+                 field: bad ? bad.getAttribute('name') : null,
+                 grew: S.bottles.length };
+      });
+      if (!/proof/i.test(refused.msg)) {
+        failures.push('shop: a buy with no proof said '
+          + JSON.stringify(refused.msg.slice(0, 50)));
+      }
+      if (refused.field !== 'proof') {
+        failures.push('shop: a refused buy did not mark the proof field');
+      }
+      if (refused.grew !== before) {
+        failures.push('shop: a bottle with no proof was added anyway');
+      }
+
+      // Now fill the proof in and buy it properly.
+      await page.locator('#shopFixed [name="proof"]').fill('105');
+      await page.locator('#shopFixed [name="proof"]').dispatchEvent('change');
+      await page.waitForTimeout(400);
+      await page.locator('#scr-shop button', { hasText: 'I bought it' })
+        .first().click();
+      await page.waitForTimeout(700);
+      const after = await page.evaluate(() => S.bottles.length);
+      // And it goes on the shelf cased the way the shelf is cased, not the
+      // way it happened to be typed.
+      const stored = await page.evaluate(() => {
+        const b = S.bottles[S.bottles.length - 1];
+        const p = b && S.catalog[b.k];
+        return p ? p.name : '';
+      });
+      if (after === before + 1 && stored !== 'Glenfarclas 105') {
+        failures.push('shop: bought bottle stored as ' + JSON.stringify(stored));
+      }
+      if (after !== before + 1) {
+        const why = await page.evaluate(() => {
+          const t = document.querySelector('.toast');
+          return t ? t.textContent.trim().slice(0, 60) : 'no toast';
+        });
+        failures.push('shop: I bought it did not add a bottle ('
+          + before + ' -> ' + after + ', ' + why + ')');
+      }
+    }
+  }
+
+  // 9. A row placed straight into a card lays its controls out on ONE line.
+  //
+  //    .item is the shelf's seven-column grid, and six screens reuse the
+  //    class for its background and its coloured edge with only two
+  //    children — so the buttons landed in the 96px "type" column and
+  //    wrapped inside it. Checked by geometry rather than by CSS: build the
+  //    same shape the library offers build, and compare the tops of the two
+  //    buttons.
+  {
+    // On a VISIBLE screen. A hidden container has no layout, so every rect
+    // is zero and getComputedStyle hands back the specified value instead
+    // of the used one — the check passes without measuring anything.
+    await page.locator('nav button[data-scr="home"]').click();
+    await page.waitForTimeout(250);
+    for (const w of [360, 390, 820]) {
+    await page.setViewportSize({ width: w, height: 780 });
+    await page.waitForTimeout(150);
+    const wrapped = await page.evaluate(() => {
+      const card = document.createElement('div');
+      card.className = 'sheet';
+      const item = document.createElement('div');
+      item.className = 'item';
+      const left = document.createElement('div');
+      // The worst case: a name with no break in it, which is what took the
+      // page width with it last time.
+      const nm = document.createElement('div');
+      nm.className = 'nm';
+      nm.textContent = 'Heaven Hill Bottled In Bond Bourbon 7 Year Kentucky '
+        + 'Straight Bourbon Whiskey';
+      left.appendChild(nm);
+      const acts = document.createElement('div');
+      acts.style.cssText = 'display:flex;gap:6px;align-items:center';
+      ['\u00d7 Drop', '+ Add'].forEach(t => {
+        const b = document.createElement('button');
+        b.className = 'chip';
+        b.textContent = t;
+        acts.appendChild(b);
+      });
+      item.appendChild(left); item.appendChild(acts);
+      card.appendChild(item);
+      document.getElementById('scr-home').appendChild(card);
+      const [a, b] = [...acts.children].map(x => x.getBoundingClientRect());
+      const nameBox = left.getBoundingClientRect();
+      const itemBox = item.getBoundingClientRect();
+      card.remove();
+      return {
+        sameLine: Math.abs(a.top - b.top) < 2,
+        // Beside the name, not under it. Under it is what the old code did
+        // on purpose to escape the 48px track.
+        besideName: a.top < nameBox.bottom,
+        /* The BUTTONS, not their wrapper. A flex container inside a 48px
+           track measures 48px wide while its children spill straight out
+           of it, so the wrapper's own box shows nothing wrong — which is
+           how the first version of this check passed against a build with
+           the fix removed. */
+        spill: Math.round(Math.max(a.right, b.right) - itemBox.right),
+        pageOver: document.documentElement.scrollWidth - window.innerWidth,
+        navBottom: Math.round(document.querySelector('nav')
+          .getBoundingClientRect().bottom),
+        vh: window.innerHeight
+      };
+    });
+    if (!wrapped.sameLine) {
+      failures.push('card row at ' + w + 'px: the two pills wrapped');
+    }
+    if (!wrapped.besideName) {
+      failures.push('card row at ' + w + 'px: the pills fell under the name');
+    }
+    // The reason they were banished in the first place: two chips in a
+    // fixed 48px track pushed the page wider than the phone and clipped
+    // the nav. A long unbreakable name is the worst case, so that is what
+    // the row is built with.
+    if (wrapped.spill > 1) {
+      failures.push('card row at ' + w + 'px: the pills spill ' + wrapped.spill
+        + 'px past the row');
+    }
+    if (wrapped.pageOver > 0) {
+      failures.push('card row at ' + w + 'px: page is ' + wrapped.pageOver
+        + 'px wider than the window');
+    }
+    if (wrapped.navBottom > wrapped.vh + 2) {
+      failures.push('card row at ' + w + 'px: nav pushed off the bottom');
+    }
+    }
+    await page.setViewportSize({ width: 390, height: 780 });
+  }
+
+  // 10. The shelf: sort control and column labels only once there is a list,
+  //     and the headers actually sort it.
+  {
+    await page.setViewportSize({ width: 900, height: 800 });
+    await page.locator('nav button[data-scr="shelf"]').click();
+    await page.waitForTimeout(400);
+
+    // The way in is the type tiles. Nothing to sort yet.
+    if (await page.locator('#shelfList .tile').count()) {
+      if (await page.locator('#scr-shelf .sortpick').isVisible()) {
+        failures.push('shelf: the sort control shows over the type tiles');
+      }
+      if (await page.locator('#scr-shelf .listhead').isVisible()) {
+        failures.push('shelf: the column labels show over the type tiles');
+      }
+      await page.locator('#shelfList .tile').first().click();
+      await page.waitForTimeout(300);
+    }
+
+    if (!(await page.locator('#scr-shelf .sortpick').isVisible())) {
+      failures.push('shelf: no sort control once the list is shown');
+    }
+    if (!(await page.locator('#scr-shelf .listhead').isVisible())) {
+      failures.push('shelf: no column labels once the list is shown');
+    }
+
+    // Proof, twice: ascending, then descending, read off the rows.
+    // The FIRST .pf on each row. A row has three of them — proof, price and
+    // have — so selecting them all compares proofs against dollars and
+    // fails whatever the sort did.
+    const proofs = async () => page.evaluate(() =>
+      [...document.querySelectorAll('#shelfList .item')]
+        .map(r => parseFloat((r.querySelector('.pf') || {}).textContent))
+        .filter(n => !isNaN(n)));
+    const head = page.locator('#scr-shelf .sorthead[data-col="proof"]');
+    await head.click();
+    await page.waitForTimeout(300);
+    const up = await proofs();
+    if (up.length > 2 && !up.every((v, i) => i === 0 || up[i - 1] <= v)) {
+      failures.push('shelf: Proof did not sort ascending');
+    }
+    await head.click();
+    await page.waitForTimeout(300);
+    const down = await proofs();
+    if (down.length > 2 && !down.every((v, i) => i === 0 || down[i - 1] >= v)) {
+      failures.push('shelf: a second click did not reverse Proof');
+    }
+    // And the menu agrees with the header, because they are one value.
+    const sel = await page.locator('#sortSel').inputValue();
+    if (sel !== 'proofd') {
+      failures.push('shelf: the Sort menu says ' + sel + ' after two clicks '
+        + 'on Proof, want proofd');
+    }
+    await page.setViewportSize({ width: 390, height: 780 });
+  }
+
+  // 11. The Find it button, and the tag that is also one.
+  {
+    await page.locator('nav button[data-scr="shelf"]').click();
+    await page.waitForTimeout(350);
+    if (await page.locator('#shelfList .tile').count()) {
+      await page.locator('#shelfList .tile').first().click();
+      await page.waitForTimeout(250);
+    }
+    if (await page.locator('#shelfList .item').count()) {
+      await page.locator('#shelfList .item').first().click();
+      await page.waitForTimeout(300);
+      const find = page.locator('#scr-detail button', { hasText: 'Find it' });
+      if (!(await find.count())) {
+        failures.push('bottle: no Find it button');
+      } else {
+        // It must be a real search for THIS bottle, not a bare google.com.
+        const name = (await page.locator('#scr-detail h2').first()
+          .textContent()).trim();
+        const url = await find.first().evaluate(b => {
+          let got = null;
+          const real = window.open;
+          window.open = u => { got = u; return null; };
+          b.click();
+          window.open = real;
+          return got;
+        });
+        if (!url || url.indexOf('google.com/search') < 0) {
+          failures.push('bottle: Find it opened ' + JSON.stringify(url));
+        } else if (url.indexOf(encodeURIComponent(name.split(' ')[0])) < 0) {
+          failures.push('bottle: Find it does not carry the bottle name: '
+            + url.slice(0, 80));
+        }
+      }
+    }
+  }
+
+  await browser.close();
+
+  if (failures.length) {
+    failures.forEach(f => console.log('  \u2717 ' + f));
+    console.log('  \u2716 ' + failures.length + ' failure(s) in a real browser');
+    process.exit(1);
+  }
+  console.log('  \u2713 loads, every tab draws, nav holds, shelf lists, shop asks, tiles hold one row, log splits, shop types and buys, card rows hold one line, headers sort, find it searches');
+})().catch(e => {
+  console.log('  \u2716 the browser check itself failed: ' + e.message.split('\n')[0]);
+  process.exit(1);
+});
