@@ -419,20 +419,62 @@ eq('same-day order is last-logged first',
 eq('an empty log is safe', L.historyRows([], hCat, hFl), []);
 eq('a null log is safe', L.historyRows(null, hCat, hFl), []);
 
-sec('history by month');
-const months = L.historyByMonth([
-  { kind: 'pour', at: L.todayISO() },
-  { kind: 'pour', at: L.todayISO() },
-  { kind: 'flight', at: L.todayISO() },
-  { kind: 'pour', at: '2019-01-05' }
-], 'pour', 6);
-eq('six buckets', Object.keys(months).length, 6);
-eq('this month counts the pours', months[L.todayISO().slice(0, 7)], 2);
-eq('a flight does not count as a pour',
-  L.historyByMonth([{ kind: 'flight', at: L.todayISO() }], 'pour', 6)[L.todayISO().slice(0, 7)], 0);
-eq('anything outside the window is ignored',
-  Object.values(months).reduce((a, b) => a + b, 0), 2);
-eq('buckets run oldest to newest', Object.keys(months)[5], L.todayISO().slice(0, 7));
+sec('dropping a line out of the log');
+// The X on a row removes exactly that entry, and Undo puts it back where it
+// came from. Expected values worked out by hand against the array below, not
+// read off the helper.
+const dropLog = [
+  { kind: 'pour', k: 'a', at: '2026-08-01' },   // index 0
+  { kind: 'flight', flight: 'PEAT IS A POSTCODE', at: '2026-08-14' },  // 1
+  { kind: 'pour', k: 'b', at: '2026-09-02' },   // index 2
+  { kind: 'pour', k: 'c', at: '2026-09-03' }    // index 3
+];
+const cut = L.histDrop(dropLog, 1);
+eq('the entry pressed comes out', cut.entry.flight, 'PEAT IS A POSTCODE');
+eq('one shorter', cut.list.length, 3);
+eq('and it is the right three', cut.list.map(x => x.k || x.flight),
+  ['a', 'b', 'c']);
+eq('the original is untouched', dropLog.length, 4);
+eq('undo puts it back where it was',
+  L.histRestore(cut.list, 1, cut.entry).map(x => x.k || x.flight),
+  ['a', 'PEAT IS A POSTCODE', 'b', 'c']);
+eq('an index past the end drops nothing', L.histDrop(dropLog, 9).entry, null);
+eq('and leaves the log whole', L.histDrop(dropLog, 9).list.length, 4);
+eq('a negative index drops nothing', L.histDrop(dropLog, -1).entry, null);
+eq('an empty log is safe', L.histDrop([], 0).entry, null);
+eq('a null log is safe', L.histDrop(null, 0).list, []);
+eq('restoring nothing changes nothing',
+  L.histRestore(dropLog, 1, null).length, 4);
+
+/* The pairing (rule 30a). The X is fed by historyRows, which sorts by date
+   and filters by kind, and it drops by the _i stamped on the row. Those are
+   two different orderings of the same log, and the removal is only correct
+   if the index survives the reordering. Pressing the X on the FIRST row of
+   the pour log — newest first, so bottle c — must remove c and nothing
+   else. Sorted order is c, b, a; original index of c is 3. */
+const dropCat = { a: { k: 'a', name: 'Alpha' }, b: { k: 'b', name: 'Bravo' },
+                  c: { k: 'c', name: 'Charlie' } };
+const dropFl = [{ title: 'PEAT IS A POSTCODE' }];
+const pourView = L.historyRows(dropLog, dropCat, dropFl, 'pour');
+eq('the pour log holds no flights', pourView.length, 3);
+eq('newest first', pourView[0].label, 'Charlie');
+const pressed = L.histDrop(dropLog, pourView[0]._i);
+eq('the X on the top row removes that bottle', pressed.entry.k, 'c');
+eq('and the flight is still in the log',
+  pressed.list.filter(x => x.kind === 'flight').length, 1);
+
+/* Same log, the other screen. The flight log on Flights and the pour log on
+   Taste read one array through the same helper, so a row can only appear in
+   one of them and a removal from either must leave the other alone. */
+const flightView = L.historyRows(dropLog, dropCat, dropFl, 'flight');
+eq('the flight log holds no pours', flightView.length, 1);
+eq('and no row is in both logs',
+  pourView.filter(x => flightView.some(y => y._i === x._i)).length, 0);
+const flightCut = L.histDrop(dropLog, flightView[0]._i);
+eq('removing the run leaves every pour', 
+  L.historyRows(flightCut.list, dropCat, dropFl, 'pour').length, 3);
+eq('and the run is gone',
+  L.historyRows(flightCut.list, dropCat, dropFl, 'flight').length, 0);
 
 /* ---------------- flight builder ---------------- */
 sec('what a variable reads and what it holds');
@@ -4073,7 +4115,7 @@ sec('§181 the App use tab names controls that exist');
     ['Change',                'Shop'],
     ['I bought it',           'In a store, holding a bottle'],
     ['Want it',               'In a store, holding a bottle'],
-    ['Correct these details', 'Add a bottle you just bought'],
+    ['Correct the details',  'Add a bottle you just bought'],
     ['Something else',        'Deciding what to buy next'],
     ['Read it',               'Looking at it on a website'],
     ['I poured this',         'Record a pour'],
@@ -4808,6 +4850,96 @@ sec('§197 nothing is queued that the publisher will not send');
   eq('and publishing it settles it',
     L.correctionFor({ name: 'X', proof: 100 },
       L.libraryEntry({ name: 'X', proof: 100 })), null);
+}
+
+/* §198  the host line and the pour it belongs to ------------------------
+ *
+ * f.cards[i].wood is the host's line for pour i, and it is positional. The
+ * editor reorders f.core and did not touch f.cards, which never showed
+ * because Save flight threw the cards away and rebuilt them from the
+ * catalogue -- destroying anything written by hand, which is why there was
+ * no way to edit one in the first place.
+ *
+ * Same shape as every fault this week: two structures holding one fact,
+ * and only one of them maintained. The assertions that matter here test the
+ * PAIR -- fold, reorder, write back out, and ask whether each line is still
+ * under its own whisky.
+ *
+ * Expected values below were worked out by hand from the fixture before the
+ * code was written.
+ */
+sec('§198 a host line stays with its pour');
+{
+  const cat = {
+    'Ardbeg 10': { k: 'Ardbeg 10', name: 'Ardbeg 10', proof: 92, fin: 'bourbon' },
+    'Lagavulin 16': { k: 'Lagavulin 16', name: 'Lagavulin 16', proof: 86,
+                      fin: 'sherry' }
+  };
+  const core = [{ k: 'Ardbeg 10', role: 'core' },
+                { k: 'Lagavulin 16', role: 'core' }];
+  const cards = [{ letter: 'A', wood: 'POUR THIS BLIND' },
+                 { letter: 'B', wood: 'the reference' }];
+
+  const folded = L.foldNotes(core, cards);
+  eq('the line comes off the card and onto the pour',
+    folded.map(x => x.note), ['POUR THIS BLIND', 'the reference']);
+  eq('and the pour is otherwise untouched', folded[0].k, 'Ardbeg 10');
+  eq('a pour with no card gets an empty line',
+    L.foldNotes([{ k: 'Ardbeg 10' }], []).map(x => x.note), ['']);
+  eq('a line already cleared stays cleared',
+    L.foldNotes([{ k: 'Ardbeg 10', note: '' }], cards).map(x => x.note), ['']);
+
+  eq('writing it back out',
+    L.cardsFrom(folded, cat).map(x => x.wood),
+    ['POUR THIS BLIND', 'the reference']);
+  eq('with the letters the pours carry',
+    L.cardsFrom(folded, cat).map(x => x.letter), ['A', 'B']);
+  eq('and the bottle and proof off the shelf',
+    L.cardsFrom(folded, cat).map(x => [x.bottle, x.proof]),
+    [['Ardbeg 10', 92], ['Lagavulin 16', 86]]);
+
+  // Absent and empty are not the same answer. A pour that has never been
+  // through the editor still gets the cask, the way it always did; one
+  // whose line was deliberately emptied stays empty.
+  eq('a pour never edited falls back to the cask',
+    L.cardsFrom([{ k: 'Ardbeg 10' }], cat)[0].wood, 'bourbon');
+  eq('a line emptied on purpose is not refilled',
+    L.cardsFrom([{ k: 'Ardbeg 10', note: '' }], cat)[0].wood, '');
+
+  /* THE PAIRING. Move the first pour down, then write the cards. B is now
+     first and carries the line that was written for it. If cards were ever
+     rebuilt positionally against a reordered core, the Islay reference
+     would be introduced as the blind pour. */
+  const moved = L.movePour(folded, 0, 1);
+  eq('the pours swapped', moved.map(x => x.k),
+    ['Lagavulin 16', 'Ardbeg 10']);
+  eq('and each line went with its own whisky',
+    L.cardsFrom(moved, cat).map(x => [x.bottle, x.wood]),
+    [['Lagavulin 16', 'the reference'], ['Ardbeg 10', 'POUR THIS BLIND']]);
+  eq('the letters follow the new order',
+    L.cardsFrom(moved, cat).map(x => x.letter), ['A', 'B']);
+
+  // Sort by proof is the same question asked by the button he actually
+  // presses: Lagavulin 86 goes first, and its line goes with it.
+  eq('sorting by proof carries the lines too',
+    L.cardsFrom(L.sortByProof(folded, cat), cat).map(x => [x.bottle, x.wood]),
+    [['Lagavulin 16', 'the reference'], ['Ardbeg 10', 'POUR THIS BLIND']]);
+
+  // A pour added in the editor has no line yet and must not blank out.
+  eq('an added pour still gets the cask',
+    L.cardsFrom(L.addPour(folded, 'Lagavulin 16'), cat)[2].wood, 'sherry');
+
+  /* A wish is not a bottle on the shelf. The version this replaced read
+     pd.name off the catalogue, so saving a flight blanked the name and the
+     proof of every pour that was not owned. */
+  const wish = { kind: 'wish', name: 'Pappy 15', proof: 107, note: 'the ringer' };
+  eq('a wish keeps its name, proof and line',
+    L.cardsFrom([wish], cat),
+    [{ letter: 'A', bottle: 'Pappy 15', proof: 107, wood: 'the ringer' }]);
+  eq('a blend is priced off its parts',
+    L.cardsFrom([{ kind: 'blend', name: 'Half and half',
+                   parts: ['Ardbeg 10', 'Lagavulin 16'], note: 'poured mixed' }],
+      cat)[0].proof, 89);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
