@@ -4766,5 +4766,49 @@ sec('§196 a flight prompt is not published');
   }
 }
 
+/* §197  the queue and the publisher agree about what a note is ---------
+ *
+ * 49 bottles queued for publishing. Press the button, nothing changes,
+ * still 49. libraryEntry had just been taught not to publish a flight-card
+ * note — correctly, it is a prompt for a room and not a description of a
+ * whisky — and correctionFor was still counting its absence from the
+ * library as a gap. So the queue asked for something the publisher would
+ * never send, for ever.
+ *
+ * Sixth instance of the same shape this week, and the last untested pair
+ * in the publish path. The rule: nothing may be queued that the publisher
+ * will not write, and the publisher decides.
+ */
+sec('§197 nothing is queued that the publisher will not send');
+{
+  const prompt = { name: 'Weller Special Reserve', proof: 90,
+                   tnFrom: 'WHEAT, TURNED UP',
+                   tn: { nose: 'p', palate: 'q' } };
+  const real = { name: 'Ardbeg 10', proof: 92,
+                 tn: { nose: 'a', palate: 'b' }, tnSrc: 'model' };
+
+  eq('a flight prompt is not a gap in the library',
+    L.correctionFor(prompt, { name: 'Weller Special Reserve', proof: 90 }),
+    null);
+  eq('a real note the library lacks still is',
+    L.correctionFor(real, { name: 'Ardbeg 10', proof: 92 }).tn.now.nose, 'a');
+
+  /* The pairing, stated directly: publish it, then ask whether it is still
+     pending. If this ever comes back non-null the button does nothing and
+     the count never moves, which is exactly what BZ saw. */
+  [prompt, real].forEach(p => {
+    eq('publishing ' + p.name + ' leaves nothing pending',
+      L.correctionFor(p, L.libraryEntry(p)), null);
+  });
+
+  // And the other direction: a field the publisher DOES send must still be
+  // queued when the library lacks it, or a real correction goes missing.
+  eq('a proof the library lacks is still a correction',
+    L.correctionFor({ name: 'X', proof: 100 }, { name: 'X' }).proof.now, 100);
+  eq('and publishing it settles it',
+    L.correctionFor({ name: 'X', proof: 100 },
+      L.libraryEntry({ name: 'X', proof: 100 })), null);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
