@@ -4291,8 +4291,11 @@ sec('§186 a flight prompt is not a tasting note');
     L.enhanceDiff(bare, real).tn.nose, 'apple');
   // Half an answer is not a note, and taking it would destroy the prompt
   // to put a fragment in its place.
-  eq('a partial answer is refused rather than half-applied',
-    L.enhanceDiff(withPrompt, { nose: 'apple', palate: 'pear' }), null);
+  eq('a nose and a palate replaces the prompt',
+    L.enhanceDiff(withPrompt, { nose: 'apple', palate: 'pear' }).tn.palate,
+    'pear');
+  eq('half of that does not',
+    L.enhanceDiff(withPrompt, { nose: 'apple' }), null);
   eq('and the prompt survives being refused',
     withPrompt.tn.nose, 'a');
   // Once filled, it must not come back round on the next run.
@@ -4367,11 +4370,20 @@ sec('§187 the parse carries the notes the run reads');
  */
 sec('§188 part of a note is not silence');
 
-eq('two of the three columns is partial',
-  L.notePartial({ nose: 'peat', palate: 'sherry' }), true);
-eq('one of them is partial too',
+/* Revised after reading the log. Three bottles came back TWICE with a
+   colour, a nose and a palate and no finish — Ardbeg Heavy Vapours, the
+   Barrell 20 Year Toasted, the Barrell Gray Label — so requiring a finish
+   condemned them to keep an invented flight note and be paid for again on
+   every run for ever. A nose and a palate is most of a tasting note, and
+   plenty of published ones stop there. Missing ONE of those two is still
+   worth asking again for. */
+eq('a nose and a palate is a note, finish or no finish',
+  L.notePartial({ nose: 'peat', palate: 'sherry' }), false);
+eq('a nose with no palate is worth asking again for',
+  L.notePartial({ nose: 'peat' }), true);
+eq('a finish on its own is too',
   L.notePartial({ finish: 'iodine' }), true);
-eq('all three is a note, not a fragment',
+eq('all three is a note',
   L.notePartial({ nose: 'a', palate: 'b', finish: 'c' }), false);
 eq('none of them is silence, not a fragment',
   L.notePartial({ age: 12, msrp: 60 }), false);
@@ -4387,9 +4399,10 @@ eq('the tn_ prefix counts the same',
   const prompt = { k: 'x', name: 'X', tnFrom: 'THREE MILES APART',
                    tn: { nose: 'a', palate: 'b', finish: 'c' } };
   const answers = [
-    { nose: 'peat', palate: 'sherry' },
+    { nose: 'peat' },
     { finish: 'iodine' },
     { nose: 'a', palate: 'b', finish: 'c' },
+    { nose: 'a', palate: 'b' },
     { age: 16 }
   ];
   eq('every partial answer is one the diff could not use',
@@ -4409,6 +4422,10 @@ eq('the tn_ prefix counts the same',
     ['Oloroso', null]);
   eq('and the complete one is used rather than retried',
     !!L.enhanceDiff(prompt, answers[2]) && !L.notePartial(answers[2]), true);
+  // The case that sent three bottles round in circles: no finish, and it
+  // is used rather than asked again for.
+  eq('a note with no finish is used, not retried',
+    !!L.enhanceDiff(prompt, answers[3]) && !L.notePartial(answers[3]), true);
 }
 
 /* §189  the library screen ---------------------------------------------
@@ -4625,6 +4642,40 @@ sec('§193 the sync merge');
     eq('and the bottle is not queued again',
       L.needsEnhancing(cat['Weller Special Reserve']), false);
   }
+}
+
+/* §194  what one bottle is short of ------------------------------------
+ *
+ * The only way to fill anything in was the whole-shelf run: 170 lookups
+ * when what you wanted was this bottle. The per-bottle button needs to
+ * know what is missing before it can offer to fetch it, and it has to
+ * agree with the bulk run about what missing MEANS — a flight-card note
+ * is not a tasting note, which is the thing that made 185 bottles look
+ * complete when they were not.
+ */
+sec('§194 what one bottle is short of');
+{
+  const full = { tn: { nose: 'a', palate: 'b' }, tnSrc: 'model', proof: 90,
+                 age: 12, msrp: 60, fin: 'PX', dist: 'Ardbeg' };
+  eq('a complete bottle is short of nothing', L.bottleGaps(full), []);
+  eq('a flight prompt counts as no notes',
+    L.bottleGaps(Object.assign({}, full, { tnFrom: 'PEAT IS A POSTCODE' }))
+      .indexOf('tasting notes') >= 0, true);
+  eq('a missing proof is named',
+    L.bottleGaps({ proof: null, tn: { nose: 'a' }, tnSrc: 'model', age: 1,
+      msrp: 1, fin: 'x', dist: 'y' }), ['proof']);
+  eq('an empty bottle is short of everything',
+    L.bottleGaps({}).length, 6);
+  eq('nothing at all is short of nothing', L.bottleGaps(null), []);
+
+  // The pairing that matters: the button must not offer to fetch a bottle
+  // the bulk run considers done, and must offer on every one it queues.
+  const cases = [full,
+    Object.assign({}, full, { tnFrom: 'X' }),
+    { name: 'bare' },
+    Object.assign({}, full, { proof: null })];
+  eq('anything the run would queue, the button offers on',
+    cases.filter(p => L.needsEnhancing(p) && !L.bottleGaps(p).length), []);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
