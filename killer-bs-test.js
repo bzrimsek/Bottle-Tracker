@@ -4562,5 +4562,70 @@ sec('§192 a cleared marker has to survive the round trip');
     L.needsEnhancing({ k: 'd', name: 'D', tnSrc: 'model' }), true);
 }
 
+/* §193  a remote copy may not delete local work ------------------------
+ *
+ * A twenty-minute run wrote real tasting notes for 161 bottles into
+ * S.edits. The next load did S.edits = remote.edits and every one was
+ * gone — the bottles were back to their flight prompts and the queue was
+ * back to 201. edits is a MAP keyed by product, and a map merges: remote
+ * wins where both sides have the key, and a key only one side has lives.
+ */
+sec('§193 the sync merge');
+{
+  const local = { A: { tn: { nose: 'real' }, tnSrc: 'model' },
+                  B: { proof: 100 } };
+  const remote = { B: { proof: 101 } };
+
+  const merged = L.mergeSyncValue('edits', local, remote);
+  eq('a local-only edit survives a remote that has never seen it',
+    merged.A.tn.nose, 'real');
+  eq('and the remote wins where both sides have the bottle',
+    merged.B.proof, 101);
+  eq('the whole run is not thrown away',
+    Object.keys(merged).sort(), ['A', 'B']);
+
+  eq('custom bottles merge the same way',
+    Object.keys(L.mergeSyncValue('custom', { X: 1 }, { Y: 2 })).sort(),
+    ['X', 'Y']);
+  eq('and dismissals still do',
+    Object.keys(L.mergeSyncValue('deadGaps', { g1: 1 }, { g2: 1 })).sort(),
+    ['g1', 'g2']);
+
+  // Lists do not merge. A shelf has an order and a length, and two of them
+  // interleaved is not a shelf.
+  eq('a list is taken whole',
+    L.mergeSyncValue('bottles', [{ id: 1 }], [{ id: 2 }]).map(b => b.id), [2]);
+  eq('and so is anything not keyed by product',
+    L.mergeSyncValue('displayName', 'old', 'new'), 'new');
+
+  // Nothing on the far side is not an instruction to delete.
+  eq('a missing remote leaves local alone',
+    L.mergeSyncValue('edits', local, undefined), local);
+  eq('and a null remote does too',
+    L.mergeSyncValue('edits', local, null), local);
+  eq('an empty remote map deletes nothing',
+    Object.keys(L.mergeSyncValue('edits', local, {})).sort(), ['A', 'B']);
+
+  // The exact loss, end to end: the run's note has to survive a load from
+  // an account that never received it.
+  {
+    const afterRun = { 'Weller Special Reserve':
+      { tn: { nose: 'a', palate: 'b', finish: 'c' }, tnSrc: 'model',
+        tnFrom: '' } };
+    const stale = { 'Some Other Bottle': { proof: 90 } };
+    const back = L.mergeSyncValue('edits', afterRun, stale);
+    const base = { 'Weller Special Reserve':
+      { k: 'Weller Special Reserve', name: 'Weller Special Reserve',
+        tnFrom: 'WHEAT, TURNED UP', tn: { nose: 'prompt' } } };
+    const cat = L.mergeCatalog(base, back);
+    eq('the note survives the load',
+      cat['Weller Special Reserve'].tn.nose, 'a');
+    eq('the prompt marker stays cleared',
+      cat['Weller Special Reserve'].tnFrom, '');
+    eq('and the bottle is not queued again',
+      L.needsEnhancing(cat['Weller Special Reserve']), false);
+  }
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
