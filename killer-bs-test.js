@@ -4232,5 +4232,58 @@ eq('and every key has a rank',
   ['shelf', 'hunt', 'allocated'].filter(k => L.findRank(k) === L.findRank(null)),
   []);
 
+/* §186  the queue and the diff have to agree ----------------------------
+ *
+ * needsEnhancing was taught that a flight-card note is a PROMPT and not a
+ * note about the whisky, which is why the run queues 200 bottles rather
+ * than 15. enhanceDiff was never taught it, and rejected every one of
+ * those 185 for having a tn.nose. The run of 2026-09-03 filled 24 and
+ * reported 177 with nothing to find; it could not have filled more than
+ * 24 whatever the lookups returned.
+ *
+ * Two functions, one rule. These test them against each other rather than
+ * each on its own, which is the only way that disagreement shows up.
+ */
+sec('§186 a flight prompt is not a tasting note');
+{
+  const promptNote = { colour: 'gold', nose: 'a', palate: 'b', finish: 'c' };
+  const withPrompt = { k: 'x', name: 'X', tnFrom: 'ONE DISTILLERY, EVERY GRAIN',
+                       tn: promptNote };
+  const mine = { k: 'y', name: 'Y', tn: { nose: 'a', palate: 'b', finish: 'c' } };
+  const bare = { k: 'z', name: 'Z' };
+  const real = { nose: 'apple', palate: 'pear', finish: 'oak', colour: 'amber' };
+
+  // The disagreement itself. Anything the queue asks about must be
+  // something the diff can act on, or the lookup is paid for and binned.
+  eq('everything the queue asks about, the diff can use',
+    [withPrompt, bare].filter(p =>
+      L.needsEnhancing(p) && !L.enhanceDiff(p, real)).map(p => p.k), []);
+  eq('and what the queue skips, the diff would not have taken anyway',
+    L.needsEnhancing(mine), false);
+
+  // Compared field by field: eq stringifies, and the two objects differ
+  // only in the order the keys were built in.
+  eq('a real note replaces a flight prompt',
+    ['nose', 'palate', 'finish', 'colour']
+      .map(k => L.enhanceDiff(withPrompt, real).tn[k]),
+    ['apple', 'pear', 'oak', 'amber']);
+  eq('and the prompt is cleared with it, or it is queued for ever',
+    L.enhanceDiff(withPrompt, real).tnFrom, null);
+  eq('a note you wrote yourself is never replaced',
+    (L.enhanceDiff(mine, real) || {}).tn.nose, 'a');
+  eq('a bottle with no note at all is filled',
+    L.enhanceDiff(bare, real).tn.nose, 'apple');
+  // Half an answer is not a note, and taking it would destroy the prompt
+  // to put a fragment in its place.
+  eq('a partial answer is refused rather than half-applied',
+    L.enhanceDiff(withPrompt, { nose: 'apple', palate: 'pear' }), null);
+  eq('and the prompt survives being refused',
+    withPrompt.tn.nose, 'a');
+  // Once filled, it must not come back round on the next run.
+  eq('a filled prompt drops out of the queue',
+    L.needsEnhancing(Object.assign({}, withPrompt,
+      { tn: real, tnFrom: null })), false);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
