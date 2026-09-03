@@ -4036,5 +4036,201 @@ sec('§180 allocated gaps stay, and stay last');
     'allocated');
 }
 
+/* §181  The App use tab names controls that have to exist ---------------
+ *
+ * L.FEATURES is prose in a constant and nothing tied it to the code it
+ * describes, so it could only ever drift — and it did, for seven versions:
+ * Shop was still documented as a search box with findings underneath, long
+ * after it started asking where you are standing.
+ *
+ * No test can read English. This reads the one part that is checkable: the
+ * tab names a control by the words printed ON it, and those words have to
+ * exist in the file as a label. It would not have caught the stale Shop
+ * paragraph, and it does catch a button being renamed out from under the
+ * documentation, which is the commoner half.
+ */
+sec('§181 the App use tab names controls that exist');
+{
+  const src = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  // Label, and the entry that promises it.
+  const NAMED = [
+    ['+ Add bottle',          'Shelf'],
+    ['Import',                'Shelf'],
+    ['Change',                'Shop'],
+    ['I bought it',           'In a store, holding a bottle'],
+    ['Want it',               'In a store, holding a bottle'],
+    ['Correct these details', 'Add a bottle you just bought'],
+    ['Something else',        'Deciding what to buy next'],
+    ['Read it',               'Looking at it on a website'],
+    ['I poured this',         'Record a pour'],
+    ['Remix',                 'Run a flight again'],
+    ['Build a flight',        'Flights']
+  ];
+  // A label is either a quoted string the script sets, or text between
+  // tags in the markup. Both are the words printed on the control.
+  const labelled = label =>
+    src.indexOf("'" + label + "'") >= 0 || src.indexOf('>' + label + '<') >= 0;
+  eq('every control the tab names by its label exists in the file',
+    NAMED.filter(([label]) => !labelled(label))
+      .map(([label, where]) => where + ' promises ' + label), []);
+
+  // And every entry that names one is still in FEATURES under that term.
+  const terms = {};
+  L.FEATURES.forEach(g => g.items.forEach(i => { terms[i.term] = i.def; }));
+  eq('and the entry that promises it is still there',
+    NAMED.filter(([, where]) => !terms[where]).map(([, where]) => where), []);
+
+  // The Info entry counts the groups. Two lists, one number, and the
+  // number was written by hand.
+  eq('the Info entry counts the groups there actually are',
+    /Four groups/.test(terms['Info']), L.REF_GROUPS.length === 4);
+
+  // Every section has a note and at least one item, or it renders as a
+  // heading with nothing under it.
+  eq('no empty section', L.FEATURES.filter(g =>
+    !g.section || !g.note || !(g.items || []).length).map(g => g.section), []);
+  eq('every entry says something', L.FEATURES
+    .reduce((a, g) => a.concat(g.items), [])
+    .filter(i => !i.term || !i.def || i.def.length < 40).map(i => i.term), []);
+}
+
+/* §182  An ask may not invent a bottle -----------------------------------
+ *
+ * Every failure BZ has hit on this screen came from two generators that
+ * described something nobody sells: a cask-strength bottling from a house
+ * that does not make one (Arran, Bruichladdich, Benriach, three for three)
+ * and a whisky older than a shelf that already tops out at 33.
+ *
+ * The rule these encode: the ask has to name something that certainly
+ * exists. Specifics that might not go in the observation, which is a fact
+ * about the shelf, not a claim about what is for sale.
+ */
+sec('§182 an ask may not invent a bottle');
+{
+  const shelfOf = rows => {
+    const cat = {}, bots = [];
+    rows.forEach((r, i) => {
+      const k = r.name + ' @ ' + r.proof;
+      cat[k] = { k: k, name: r.name, dist: r.dist, proof: r.proof,
+                 age: r.age, sub: 'scotch', msrp: 60 };
+      bots.push({ id: 'x' + i, k: k, status: 'open' });
+    });
+    return [cat, bots];
+  };
+  const asks = (axis, rows) => {
+    const [c, b] = shelfOf(rows);
+    return L.exploreAxis(axis, c, b).opportunities.map(o => o.ask);
+  };
+
+  const benriach = [
+    { name: 'Benriach A', dist: 'Benriach Distillery', proof: 86, age: 12 },
+    { name: 'Benriach B', dist: 'Benriach Distillery', proof: 92, age: 10 },
+    { name: 'Benriach C', dist: 'Benriach Distillery', proof: 90, age: 33 }
+  ];
+
+  eq('a house ask names the house, not a bottling it may not make',
+    asks('house', benriach), ['Another Benriach']);
+  eq('and never asks for cask strength again',
+    asks('house', benriach).filter(a => /cask.strength/i.test(a)), []);
+  // "Another Benriach Distillery" is not how anybody says it.
+  eq('a trailing Distillery is dropped from the ask',
+    asks('house', benriach).some(a => /Distillery/.test(a)), false);
+  // The strength is still said — as an observation, which is a fact about
+  // the shelf and cannot be wrong about what is for sale.
+  {
+    const [c, b] = shelfOf(benriach);
+    eq('the strength stays in the observation',
+      L.exploreAxis('house', c, b).opportunities[0].why,
+      '3 from Benriach Distillery, nothing above 92 proof.');
+  }
+
+  // Ages are bottled at tiers. Worked out by hand from [10,12,15,18,21,25,30]:
+  // a shelf topping out at 14 wants 15; at 8 wants 10; at 33 there is no
+  // tier left and the right number of asks is none.
+  const aged = hi => asks('age',
+    [{ name: 'P', dist: 'X', proof: 90, age: 12 },
+     { name: 'Q', dist: 'X', proof: 90, age: hi }])
+      .filter(a => /year old whisky$/.test(a));
+  eq('the next tier up is the ask', aged(14), ['A 15 year old whisky']);
+  eq('a tier is skipped to, not stepped past', aged(19),
+    ['A 21 year old whisky']);
+  eq('a shelf past the top tier is asked for nothing older', aged(33), []);
+  eq('and a shelf at exactly the top tier is too', aged(30), []);
+  eq('the tiers ascend', L.AGE_TIERS.slice().sort((a, b) => a - b),
+    L.AGE_TIERS);
+}
+
+/* §183  One rule for what a cask is -------------------------------------
+ *
+ * parseLookup carried its own weaker copy of cleanFinish: letters, and not
+ * a bare year. A shop's finish NOTE passes both of those and is not a
+ * cask, so the app announced "A finish you do not have: Long-lasting with
+ * brown sugar sweetness..." — and, since the cask axis measures nearness
+ * by this field, it poisoned that too. Both paths call the one rule now.
+ */
+sec('§183 a finish is a cask, not a tasting note');
+{
+  const lk = fin => L.parseLookup({ name: 'X', proof: 100, fin: fin });
+  eq('a tasting note is not a cask',
+    lk('Long-lasting with brown sugar sweetness fading into cinnamon, '
+       + 'leather and toast').fin, null);
+  eq('a cask is a cask', lk('Pedro Ximenez').fin, 'Pedro Ximenez');
+  eq('two words is still a cask', lk('Oloroso Sherry').fin, 'Oloroso Sherry');
+  eq('a release year is not a cask', lk('2021').fin, null);
+  eq('nothing said is nothing filled', lk(null).fin, null);
+  // The two paths must not disagree: whatever cleanFinish rejects, the
+  // lookup rejects, or the field means two things depending on where it
+  // came from.
+  eq('the lookup and the page reader agree about every case',
+    ['Pedro Ximenez', '2021', 'Oloroso Sherry', 'Tokaji',
+     'Long-lasting with brown sugar and cinnamon notes', '', '19']
+      .filter(v => lk(v).fin !== L.cleanFinish(v)), []);
+}
+
+/* §184  Two vocabularies, one name --------------------------------------
+ *
+ * REEL_HELP is keyed by reel id and carried an entry for `scar`. There is
+ * no scar reel — Occasion is `price` — so that help never reached a
+ * screen, and the orphan looked like documentation for the release field
+ * while using the price bands' words. The reels are the only list that
+ * decides what keys and faces are real, so they are what this checks.
+ */
+sec('§184 the reel help matches the reels');
+
+eq('every reel has help', L.REELS.filter(r => !L.REEL_HELP[r.id])
+  .map(r => r.id), []);
+eq('and no help is orphaned from a reel',
+  Object.keys(L.REEL_HELP).filter(k => !L.REELS.some(r => r.id === k)), []);
+// Type is deliberately empty — twelve faces that say what they are. Every
+// other reel explains every face it can land on, except Any, which needs
+// no explaining.
+eq('every face a reel can land on is explained',
+  L.REELS.filter(r => Object.keys(L.REEL_HELP[r.id][1]).length)
+    .reduce((miss, r) => miss.concat(r.faces
+      .filter(f => f.v !== 'any' && !L.REEL_HELP[r.id][1][f.v])
+      .map(f => r.id + '/' + f.v)), []), []);
+// The Occasion reel is the price band, so its faces have to BE the bands.
+eq('the occasion faces are the price bands',
+  L.REELS.find(r => r.id === 'price').faces
+    .map(f => f.v).filter(v => v !== 'any'),
+  ['everyday', 'good', 'special', 'vault']);
+eq('and priceBand only ever returns one of them',
+  [10, 60, 150, 500].map(L.priceBand),
+  ['everyday', 'good', 'special', 'vault']);
+
+sec('§185 findability does not borrow your own shelf');
+// "On the shelf" meant a shop's shelf while every other screen in the app
+// means yours, so a bottle you do not own was tagged with the word for
+// bottles you do.
+eq('no findability label says shelf',
+  Object.keys(L.FIND_LABEL).filter(k => /shelf/i.test(L.FIND_LABEL[k])), []);
+eq('the keys are untouched, because the lookup service answers in them',
+  Object.keys(L.FIND_LABEL).sort(), ['allocated', 'hunt', 'shelf']);
+eq('every key findability can return has a label',
+  ['shelf', 'hunt', 'allocated'].filter(k => !L.FIND_LABEL[k]), []);
+eq('and every key has a rank',
+  ['shelf', 'hunt', 'allocated'].filter(k => L.findRank(k) === L.findRank(null)),
+  []);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
