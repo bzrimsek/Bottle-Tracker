@@ -1615,10 +1615,19 @@ const takeBare = L.enhanceDiff(enCat.bare, found);
 eq('an empty bottle takes the notes', takeBare.tn.nose, 'new nose');
 eq('and the age', takeBare.age, 12);
 eq('and the price', takeBare.msrp, 60);
-// "finish" arriving beside nose and palate is the finish of the TASTE, not
-// a cask. Taking it as a cask would put "new finish" in the Finish field.
-eq('but not a cask, when finish came as part of a note set',
-  takeBare.fin, undefined);
+/* The lookup schema asks for `fin` (the cask) and `finish` (the finish of
+   the taste) as two separate fields in one object, so reading one as the
+   other is never right. This used to assert that NO cask was taken when a
+   note set arrived — which was the old guard's behaviour and was wrong in
+   the other direction: a genuine Oloroso was thrown away for the crime of
+   having a nose beside it, which is nearly every answer. The cask comes
+   from `fin`, always; `finish` never becomes one. */
+eq('the cask comes from fin, even beside a note set',
+  takeBare.fin, 'Oloroso');
+// Nothing is taken at all, so the diff returns null rather than an object
+// with a cask in it.
+eq('and a tasting finish alone gives the diff nothing to take',
+  L.enhanceDiff(enCat.bare, { finish: 'long, warming, gently smoky' }), null);
 
 // Nothing already present is ever overwritten — but a blank field on the
 // same bottle is still worth filling, which is the point of asking.
@@ -3736,10 +3745,15 @@ eq('an age is not', L.cleanFinish('12'), null);
 eq('nothing is nothing', L.cleanFinish('  '), null);
 eq('null is safe', L.cleanFinish(null), null);
 // Both ways in are covered: what a lookup returns, and what a product stores.
-eq('a lookup finish is checked',
-  L.parseLookup({ name: 'X', proof: 92, finish: '2021' }).fin, null);
+eq('a lookup cask is checked',
+  L.parseLookup({ name: 'X', proof: 92, fin: '2021' }).fin, null);
 eq('a real one still arrives',
-  L.parseLookup({ name: 'X', proof: 92, finish: 'Oloroso' }).fin, 'Oloroso');
+  L.parseLookup({ name: 'X', proof: 92, fin: 'Oloroso' }).fin, 'Oloroso');
+// `finish` is the taste, and is carried as a sensory column, never as a cask.
+eq('a tasting finish is not a cask however it reads',
+  L.parseLookup({ name: 'X', proof: 92, finish: 'Oloroso' }).fin, null);
+eq('and it survives as a note column',
+  L.parseLookup({ name: 'X', proof: 92, finish: 'Oloroso' }).finish, 'Oloroso');
 eq('a stored finish is checked',
   L.normalizeProduct({ name: 'X', proof: 92, fin: '2021' }).fin, null);
 // And nothing on the real shelf is a bare number.
@@ -4337,6 +4351,116 @@ sec('§187 the parse carries the notes the run reads');
   eq('an answer of nothing at all is nothing',
     L.parseLookup({ name: null, proof: null, nose: null, age: null,
                     msrp: null, fin: null }, { needIdentity: false }), null);
+}
+
+/* §188  part of a note is not silence -----------------------------------
+ *
+ * The 2026-09-03 re-run: 6 errored, 22 came back as "nothing it does not
+ * already have", 1 genuinely had nothing. Lagavulin 16 was in the 22,
+ * which cannot be right about the most written-about whisky there is. It
+ * was not silence — the service answered with pieces of a note, and
+ * enhanceDiff needs all three of nose, palate and finish before it will
+ * write over a flight prompt, so a partial answer looked identical to an
+ * empty one from the outside.
+ */
+sec('§188 part of a note is not silence');
+
+eq('two of the three columns is partial',
+  L.notePartial({ nose: 'peat', palate: 'sherry' }), true);
+eq('one of them is partial too',
+  L.notePartial({ finish: 'iodine' }), true);
+eq('all three is a note, not a fragment',
+  L.notePartial({ nose: 'a', palate: 'b', finish: 'c' }), false);
+eq('none of them is silence, not a fragment',
+  L.notePartial({ age: 12, msrp: 60 }), false);
+eq('nothing at all is not a fragment', L.notePartial(null), false);
+eq('the tn_ prefix counts the same',
+  L.notePartial({ tn_nose: 'a', tn_finish: 'c' }), true);
+
+// The pairing that matters: exactly the answers enhanceDiff refuses on a
+// flight-prompt bottle are the ones worth asking again for. If these two
+// ever disagree the run either retries what it already used, or bins what
+// it should have retried.
+{
+  const prompt = { k: 'x', name: 'X', tnFrom: 'THREE MILES APART',
+                   tn: { nose: 'a', palate: 'b', finish: 'c' } };
+  const answers = [
+    { nose: 'peat', palate: 'sherry' },
+    { finish: 'iodine' },
+    { nose: 'a', palate: 'b', finish: 'c' },
+    { age: 16 }
+  ];
+  eq('every partial answer is one the diff could not use',
+    answers.filter(a => L.notePartial(a) && L.enhanceDiff(prompt, a)), []);
+  // The catch that found the third copy of the cask bug: a reply that got
+  // as far as `finish` and stopped is a tasting word, and it was being
+  // written into the cask field.
+  eq('a tasting finish is never taken as a cask',
+    L.enhanceDiff({ k: 'q', name: 'Q' }, { finish: 'long smoke and iodine' }),
+    null);
+  eq('and the cask field still is',
+    L.enhanceDiff({ k: 'q', name: 'Q' }, { fin: 'Oloroso' }).fin, 'Oloroso');
+  eq('the parse keeps them apart too',
+    [L.parseLookup({ name: 'X', proof: 90, fin: 'Oloroso',
+                     finish: 'long and warming' }).fin,
+     L.parseLookup({ name: 'X', proof: 90, finish: 'long and warming' }).fin],
+    ['Oloroso', null]);
+  eq('and the complete one is used rather than retried',
+    !!L.enhanceDiff(prompt, answers[2]) && !L.notePartial(answers[2]), true);
+}
+
+/* §189  the library screen ---------------------------------------------
+ *
+ * The same offered bottle read Accept on a laptop and Drop on a phone.
+ * mergeContribution was being handed S.base — this device's merged
+ * catalogue — instead of the shared library, so a device that had pulled
+ * the library saw a clash and one that had not saw none. Whether a bottle
+ * is already in the library is a fact about the library, and it has to
+ * come out the same everywhere.
+ */
+sec('§189 a contribution is judged against the library');
+{
+  const lib = { 'lagavulin-16': { name: 'Lagavulin 16 Year Old', proof: 86 } };
+  const entry = { name: 'Lagavulin 16 Year Old', proof: 86, sub: 'scotch' };
+  const fresh = { name: 'Ardbeg Ardcore', proof: 92, sub: 'scotch' };
+
+  eq('a bottle already in the library is refused',
+    L.mergeContribution(lib, entry).ok, false);
+  eq('and the reason names the entry it clashes with',
+    /already in the library/.test(L.mergeContribution(lib, entry).why), true);
+  eq('a bottle the library lacks is accepted',
+    L.mergeContribution(lib, fresh).ok, true);
+  // The whole bug: the same library and the same entry give the same
+  // verdict, whatever any one device happens to hold locally.
+  eq('the verdict does not depend on the device',
+    L.mergeContribution(lib, entry).ok,
+    L.mergeContribution(JSON.parse(JSON.stringify(lib)), entry).ok);
+  eq('an empty library refuses nothing',
+    L.mergeContribution({}, entry).ok, true);
+  eq('and a missing library does not throw',
+    L.mergeContribution(null, entry).ok, true);
+  eq('a nameless entry is still refused',
+    L.mergeContribution(lib, { proof: 90 }).ok, false);
+}
+
+sec('§190 a correction reads as a change');
+// pendingForLibrary kept the field NAMES and threw the values away, so the
+// one screen whose job is to let a batch be refused showed the kind of
+// change and never the change.
+{
+  const diff = { proof: { was: null, now: 100 },
+                 fin: { was: 'Oloroso', now: 'Pedro Ximenez' },
+                 tn: { was: null, now: { nose: 'tar and seaweed' } } };
+  const said = L.describeCorrection(diff);
+  eq('every changed field is described', said.length, 3);
+  eq('a field the library lacks reads as nothing, not as null',
+    said[0].text, 'proof: nothing → 100');
+  eq('a changed value reads as one thing becoming another',
+    said[1].text, 'fin: Oloroso → Pedro Ximenez');
+  eq('a note is summarised by its nose rather than dumped',
+    /^tn: nothing → tar and seaweed/.test(said[2].text), true);
+  eq('no diff describes nothing', L.describeCorrection(null), []);
+  eq('an empty diff describes nothing', L.describeCorrection({}), []);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
