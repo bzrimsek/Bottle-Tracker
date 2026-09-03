@@ -4285,5 +4285,59 @@ sec('§186 a flight prompt is not a tasting note');
       { tn: real, tnFrom: null })), false);
 }
 
+/* §187  the parse has to carry what the run reads --------------------------
+ *
+ * enhanceDiff builds a note out of found.nose, found.palate and
+ * found.finish. parseLookup never carried any of them: it kept name, dist,
+ * proof, sub, style, age, msrp, fin, scar, region and note, and dropped the
+ * four sensory fields on the floor. So the in-app fill-in run could never
+ * write a tasting note at all — the only things it could ever take were an
+ * age, a cask or a price. The 113 model-sourced notes on the shelf came
+ * from the batch sheet, which is different code.
+ *
+ * The second gate: a name and a proof are the identity of a bottle you are
+ * IDENTIFYING. The run already knows which bottle it asked about, so a
+ * complete set of notes was being thrown away for a null proof and then
+ * reported as the lookup finding nothing.
+ */
+sec('§187 the parse carries the notes the run reads');
+{
+  const full = { name: 'Ardbeg Corryvreckan', proof: 114.2, colour: 'amber',
+                 nose: 'tar and seaweed', palate: 'black pepper',
+                 finish: 'long smoke' };
+  const parsed = L.parseLookup(full);
+  eq('the four sensory fields survive the parse',
+    ['colour', 'nose', 'palate', 'finish'].filter(k => !parsed[k]), []);
+  // The whole point: what comes out of the parse must be enough for the
+  // diff to build a note from. These two were tested apart and agreed
+  // about nothing.
+  eq('and what survives is enough for the diff to make a note',
+    L.enhanceDiff({ k: 'a', name: 'Ardbeg Corryvreckan' }, parsed).tn.nose,
+    'tar and seaweed');
+  eq('tn_-prefixed fields work too',
+    L.parseLookup({ name: 'X', proof: 90, tn_nose: 'smoke' }).nose, 'smoke');
+
+  const noProof = { name: 'Lagavulin 16', proof: null, nose: 'peat',
+                    palate: 'sherry', finish: 'iodine' };
+  eq('identifying still needs a name and a proof',
+    L.parseLookup(noProof), null);
+  eq('enriching does not, because the bottle is already named',
+    L.parseLookup(noProof, { needIdentity: false }).nose, 'peat');
+  eq('and the note it carries is usable',
+    L.enhanceDiff({ k: 'b', name: 'Lagavulin 16' },
+      L.parseLookup(noProof, { needIdentity: false })).tn.finish, 'iodine');
+
+  // An endpoint that threw answers with an error object. That is not a
+  // bottle and never was, on either path.
+  eq('an error object is not a bottle',
+    L.parseLookup({ error: 'API 429: rate limited' }, { needIdentity: false }),
+    null);
+  eq('nor when identifying', L.parseLookup({ error: 'boom' }), null);
+  // All nulls is the service honestly saying it does not know.
+  eq('an answer of nothing at all is nothing',
+    L.parseLookup({ name: null, proof: null, nose: null, age: null,
+                    msrp: null, fin: null }, { needIdentity: false }), null);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
