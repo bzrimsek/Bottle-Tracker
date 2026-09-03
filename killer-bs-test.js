@@ -5424,9 +5424,12 @@ sec('§205 a load hands over what the account lacks');
     L.changedKeys(['favs'], merged,
       L.pushedFromRemote(['favs'], merged, remoteFavs)), ['favs']);
 
-  // An empty account: everything is new, nothing is recorded.
-  eq('a first sign-in sends the lot',
-    L.changedKeys(KEYS, S_, L.pushedFromRemote(KEYS, S_, {})), KEYS);
+  /* An empty account: everything with something IN it is new. The empty
+     history is not — Firebase stores nothing for an empty list either way,
+     so sending it is 179 bytes that change nothing there. See 207. */
+  eq('a first sign-in sends everything that holds anything',
+    L.changedKeys(KEYS, S_, L.pushedFromRemote(KEYS, S_, {})),
+    ['bottles', 'custom']);
 }
 
 /* §206  the same data is the same data, whatever order it is in --------
@@ -5480,6 +5483,175 @@ sec('§206 one signature for the same data');
   const afterPush = { bottles: L.syncSig(state.bottles) };
   eq('and what a landed push records, it reads the same way',
     L.changedKeys(['bottles'], state, afterPush), []);
+}
+
+/* §207  empty here and absent there is not a difference ----------------
+ *
+ * The load push came down from 61,647 bytes to 179 — and 179 was still
+ * wrong. Firebase cannot STORE an empty list or an empty map: write [] and
+ * the key is simply absent afterwards. So an empty wishlist never matched
+ * an account holding nothing, and the same 179 bytes went up on every load,
+ * for ever. Same shape as the key-order fault, three orders smaller.
+ */
+sec('§207 empty and absent are the same state');
+{
+  eq('an empty list is empty', L.isEmptyValue([]), true);
+  eq('an empty map is empty', L.isEmptyValue({}), true);
+  eq('missing is empty', L.isEmptyValue(undefined), true);
+  eq('null is empty', L.isEmptyValue(null), true);
+  eq('a list with something in it is not', L.isEmptyValue([1]), false);
+  eq('nor is a map', L.isEmptyValue({ a: 1 }), false);
+  eq('nor is a number, including zero', L.isEmptyValue(0), false);
+  eq('nor is an empty string, which IS storable',
+    L.isEmptyValue(''), false);
+
+  /* His log, exactly: an empty wishlist and no proposals, against an
+     account that holds neither, and one real key that matches. */
+  const S_ = { wish: [], proposals: [], bottles: [{ id: 'B1' }] };
+  const remote = { bottles: [{ id: 'B1' }] };
+  eq('nothing goes up when there is nothing to say',
+    L.changedKeys(['wish', 'proposals', 'bottles'], S_,
+      L.pushedFromRemote(['wish', 'proposals', 'bottles'], S_, remote)), []);
+
+  // And the moment there IS something, it goes.
+  const S2 = { wish: [{ name: 'Longrow 18' }] };
+  eq('a wishlist with a bottle on it pushes',
+    L.changedKeys(['wish'], S2, L.pushedFromRemote(['wish'], S2, {})),
+    ['wish']);
+
+  // The other direction: the account holds a wishlist, this device has
+  // emptied it. That is a real change and must not be swallowed.
+  const S3 = { wish: [] };
+  eq('emptying a list the account holds is still a change',
+    L.changedKeys(['wish'], S3,
+      L.pushedFromRemote(['wish'], S3, { wish: [{ name: 'Longrow 18' }] })),
+    ['wish']);
+}
+
+/* §208  renaming an entry in the shared library ------------------------
+ *
+ * The library editor had fields for proof, distillery, age, cask, region
+ * and price — and not for the NAME, which is the field it is usually opened
+ * for: an entry published in whatever case it was typed in.
+ *
+ * A rename there is not a write, it is a MOVE. The library is keyed by
+ * libKey(name), so writing under the new name without clearing the old one
+ * leaves the bottle in the library twice under two spellings, and everybody
+ * reads that.
+ */
+sec('§208 renaming a library entry');
+{
+  const products = {
+    heaven_hill_grain_to_glass_wheated_bourbon:
+      { name: 'heaven hill grain to glass wheated bourbon' },
+    ardbeg_10: { name: 'Ardbeg 10' }
+  };
+  const key = 'heaven_hill_grain_to_glass_wheated_bourbon';
+
+  /* The case fix, which is the reason this exists. libKey lower-cases, so
+     the key does NOT change and the entry is rewritten in place — no move,
+     nothing to clear, and no window where the library holds both. */
+  const cased = L.libraryRename(products, key,
+    'heaven hill grain to glass wheated bourbon');
+  eq('a case fix is allowed', cased.ok, true);
+  eq('and cased like the rest of the shelf', cased.name,
+    'Heaven Hill Grain To Glass Wheated Bourbon');
+  eq('and does not move the entry', cased.moved, false);
+  eq('because the key is the same either way', cased.key, key);
+
+  // A real rename moves it, and the caller has to clear the old key.
+  const moved = L.libraryRename(products, key, 'Weller 12');
+  eq('a real rename is a move', moved.moved, true);
+  eq('to the new key', moved.key, 'weller_12');
+
+  /* Refused when the name is taken: the write would silently replace
+     somebody else's entry, and the library is what everybody reads. */
+  const clash = L.libraryRename(products, key, 'Ardbeg 10');
+  eq('a name already in the library is refused', clash.ok, false);
+  eq('and says which one', clash.why, 'The library already holds Ardbeg 10.');
+
+  // Renaming an entry to its own current name is not a clash with itself.
+  eq('an entry may keep its own name',
+    L.libraryRename(products, 'ardbeg_10', 'Ardbeg 10').ok, true);
+
+  eq('a name too short is refused',
+    L.libraryRename(products, key, 'x').ok, false);
+  eq('and so is nothing at all',
+    L.libraryRename(products, key, '   ').ok, false);
+  eq('a name that files under nothing is refused',
+    L.libraryRename(products, key, '...').ok, false);
+}
+
+/* §209  sorting from the column headers -------------------------------
+ *
+ * The labels were already sitting over their columns; making them the
+ * control is one fewer place to look than a menu above the list. A header
+ * over a NUMBER takes two directions, because dearest and cheapest are both
+ * questions somebody asks of a price column.
+ *
+ * The headers and the Sort menu are two controls over ONE value, painted
+ * from that value in one place — two painters is how a menu and a header
+ * end up disagreeing about what the list is sorted by.
+ */
+sec('§209 the column headers sort the shelf');
+{
+  // A single-direction column just selects itself, however often it is hit.
+  eq('Bottle selects name', L.nextSort('name', 'got'), 'name');
+  eq('and again is still name', L.nextSort('name', 'name'), 'name');
+  eq('Type selects sub', L.nextSort('sub', 'name'), 'sub');
+  eq('Have selects have', L.nextSort('have', 'name'), 'have');
+
+  // A number column swaps direction on the second click, and wraps back.
+  eq('Proof starts ascending', L.nextSort('proof', 'got'), 'proof');
+  eq('then descends', L.nextSort('proof', 'proof'), 'proofd');
+  eq('then back up again', L.nextSort('proof', 'proofd'), 'proof');
+  eq('Price starts cheapest', L.nextSort('msrp', 'got'), 'cheap');
+  eq('then dearest', L.nextSort('msrp', 'cheap'), 'price');
+
+  /* Arriving from ANOTHER column starts at that column's first direction
+     rather than inheriting a descending from wherever you were. */
+  eq('coming off a descending proof, price starts cheapest',
+    L.nextSort('msrp', 'proofd'), 'cheap');
+
+  // The mark, which is the only thing telling you where the sort is.
+  eq('the sorted number column shows its direction',
+    L.sortMark('proof', 'proof'), '\u2191');
+  eq('and the other way', L.sortMark('proof', 'proofd'), '\u2193');
+  eq('a one-way column just shows it is the one',
+    L.sortMark('name', 'name'), '\u00b7');
+  eq('a column that is not sorting shows nothing',
+    L.sortMark('name', 'proof'), '');
+  eq('and neither does any column under Recently added, which has none',
+    ['name', 'sub', 'proof', 'msrp', 'have']
+      .map(c => L.sortMark(c, 'got')).join(''), '');
+
+  // Every column maps to a sort that exists, or a header does nothing when
+  // pressed and there is no way to tell that from a header that is broken.
+  const ids = L.SORTS.map(x => x.id);
+  const missing = [];
+  Object.keys(L.SORT_COLUMNS).forEach(c => {
+    L.SORT_COLUMNS[c].forEach(id => { if (ids.indexOf(id) < 0) missing.push(id); });
+  });
+  eq('every column header sorts by something the shelf offers', missing, []);
+  eq('and the default is the one with no column',
+    L.columnOfSort('got'), null);
+
+  /* The two sorts the headers needed, which did not exist before. Hand
+     worked from the fixture: two bourbons and one rye, and Ardbeg has two
+     bottles to the others' one. */
+  const prods = [{ k: 'z', name: 'Zed', sub: 'rye' },
+                 { k: 'a', name: 'Ardbeg 10', sub: 'scotch' },
+                 { k: 'b', name: 'Buffalo', sub: 'bourbon' }];
+  const bots = [{ id: 'B1', k: 'a', status: 'open' },
+                { id: 'B2', k: 'a', status: 'open' },
+                { id: 'B3', k: 'z', status: 'open' },
+                { id: 'B4', k: 'b', status: 'gone' }];
+  eq('Type sorts by the type, then the name',
+    L.shelfSort(prods, 'sub', bots).map(p => p.name),
+    ['Buffalo', 'Zed', 'Ardbeg 10']);
+  eq('Have puts the most bottles first, and a retired one does not count',
+    L.shelfSort(prods, 'have', bots).map(p => p.name),
+    ['Ardbeg 10', 'Zed', 'Buffalo']);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
