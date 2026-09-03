@@ -5228,5 +5228,66 @@ sec('§202 what a flight is asking');
     ['Aged Nothing', 'Ardbeg 10', 'In The Flight', 'Zed Rye']);
 }
 
+/* §203  a push carries the difference, not the shelf -------------------
+ *
+ * Diagnostics, from BZ's device, at the moment he bought the bottle:
+ *   "fb push did not come back in 20s; unlocked so the next one runs"
+ *
+ * That is the other half of §200. The load no longer overwrites newer local
+ * work, but the write still has to land, and this one never did. fbPush sent
+ * EVERY key on EVERY save with set(): 31KB of bottles and 161KB of custom
+ * flights, 189KB minimum, re-uploaded to log a pour or star a favourite.
+ *
+ * It now sends only the keys whose value differs from what was last written,
+ * with update() rather than set() — update writes the named children and
+ * leaves the rest, which is what makes sending a subset safe at all. A
+ * bought bottle is a few KB instead of 189.
+ *
+ * The ordering rule that matters: the record of what was pushed is written
+ * AFTER the write lands. Recording it when the push is sent would mean a
+ * failed push is never retried, which is this same bug with a longer fuse.
+ */
+sec('§203 a push carries only what changed');
+{
+  const KEYS = ['bottles', 'history', 'custom'];
+  const S_ = { bottles: [{ id: 'B1' }], history: [], custom: { a: 1 } };
+
+  eq('a session that has pushed nothing sends everything',
+    L.changedKeys(KEYS, S_, {}), KEYS);
+
+  const pushed = {};
+  KEYS.forEach(k => { pushed[k] = JSON.stringify(S_[k]); });
+  eq('and then has nothing to say', L.changedKeys(KEYS, S_, pushed), []);
+
+  // Buying a bottle touches one key. The flights do not move.
+  S_.bottles.push({ id: 'B2' });
+  eq('a bought bottle sends bottles and nothing else',
+    L.changedKeys(KEYS, S_, pushed), ['bottles']);
+
+  // Equal content is equal, whatever object it lives in — otherwise every
+  // rebuild would look like a change and nothing would ever be skipped.
+  eq('the same value rebuilt is not a change',
+    L.changedKeys(['custom'], { custom: { a: 1 } },
+      { custom: JSON.stringify({ a: 1 }) }), []);
+  eq('a changed value is', L.changedKeys(['custom'], { custom: { a: 2 } },
+    { custom: JSON.stringify({ a: 1 }) }), ['custom']);
+
+  // A key the account has never seen, on a state that has one.
+  eq('a key with no record is sent',
+    L.changedKeys(['wish'], { wish: [] }, {}), ['wish']);
+  // A key the state does not hold has nothing to write, so it is not sent.
+  // Firebase would read the undefined as a delete, and a push that quietly
+  // removes a node nobody touched is worse than a push that skips it.
+  eq('a key with no value is not sent', L.changedKeys(['nothing'], {}, {}), []);
+
+  /* THE PAIRING, as the fault would happen: the push fails, so the record
+     is NOT updated, so the next push still carries the bottle. If this ever
+     comes back empty the purchase is stranded on the device for good. */
+  const afterFailure = L.changedKeys(KEYS, S_, pushed);
+  eq('a failed push leaves the work queued', afterFailure, ['bottles']);
+  KEYS.forEach(k => { pushed[k] = JSON.stringify(S_[k]); });   // now it lands
+  eq('and a landed push clears it', L.changedKeys(KEYS, S_, pushed), []);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
