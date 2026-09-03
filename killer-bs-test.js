@@ -429,7 +429,7 @@ const dropLog = [
   { kind: 'pour', k: 'b', at: '2026-09-02' },   // index 2
   { kind: 'pour', k: 'c', at: '2026-09-03' }    // index 3
 ];
-const cut = L.histDrop(dropLog, 1);
+const cut = L.histDropRun(dropLog, 1);
 eq('the entry pressed comes out', cut.entry.flight, 'PEAT IS A POSTCODE');
 eq('one shorter', cut.list.length, 3);
 eq('and it is the right three', cut.list.map(x => x.k || x.flight),
@@ -438,11 +438,11 @@ eq('the original is untouched', dropLog.length, 4);
 eq('undo puts it back where it was',
   L.histRestore(cut.list, 1, cut.entry).map(x => x.k || x.flight),
   ['a', 'PEAT IS A POSTCODE', 'b', 'c']);
-eq('an index past the end drops nothing', L.histDrop(dropLog, 9).entry, null);
-eq('and leaves the log whole', L.histDrop(dropLog, 9).list.length, 4);
-eq('a negative index drops nothing', L.histDrop(dropLog, -1).entry, null);
-eq('an empty log is safe', L.histDrop([], 0).entry, null);
-eq('a null log is safe', L.histDrop(null, 0).list, []);
+eq('an index past the end drops nothing', L.histDropRun(dropLog, 9).entry, null);
+eq('and leaves the log whole', L.histDropRun(dropLog, 9).list.length, 4);
+eq('a negative index drops nothing', L.histDropRun(dropLog, -1).entry, null);
+eq('an empty log is safe', L.histDropRun([], 0).entry, null);
+eq('a null log is safe', L.histDropRun(null, 0).list, []);
 eq('restoring nothing changes nothing',
   L.histRestore(dropLog, 1, null).length, 4);
 
@@ -458,7 +458,7 @@ const dropFl = [{ title: 'PEAT IS A POSTCODE' }];
 const pourView = L.historyRows(dropLog, dropCat, dropFl, 'pour');
 eq('the pour log holds no flights', pourView.length, 3);
 eq('newest first', pourView[0].label, 'Charlie');
-const pressed = L.histDrop(dropLog, pourView[0]._i);
+const pressed = L.histDropRun(dropLog, pourView[0]._i);
 eq('the X on the top row removes that bottle', pressed.entry.k, 'c');
 eq('and the flight is still in the log',
   pressed.list.filter(x => x.kind === 'flight').length, 1);
@@ -470,7 +470,7 @@ const flightView = L.historyRows(dropLog, dropCat, dropFl, 'flight');
 eq('the flight log holds no pours', flightView.length, 1);
 eq('and no row is in both logs',
   pourView.filter(x => flightView.some(y => y._i === x._i)).length, 0);
-const flightCut = L.histDrop(dropLog, flightView[0]._i);
+const flightCut = L.histDropRun(dropLog, flightView[0]._i);
 eq('removing the run leaves every pour', 
   L.historyRows(flightCut.list, dropCat, dropFl, 'pour').length, 3);
 eq('and the run is gone',
@@ -2085,11 +2085,11 @@ eq('but do not overwrite one',
   L.correctionFor({ tn: { nose: 'mine' } },
     Object.assign({ tn: { nose: 'theirs' } }, entry)), null);
 
-sec('applying one');
-const fixed = L.applyCorrection(entry, L.correctionFor({ age: 5 }, entry));
-eq('the field changes', fixed.age, 5);
-eq('the rest does not', fixed.proof, 94.8);
-eq('and the original is untouched', entry.age, undefined);
+/* The 'applying one' section stood here and tested L.applyCorrection, which
+   nothing in the app called: the review of 2026-09-03 found it dead and it
+   was removed. A passing test over code nobody runs is worse than no test,
+   because it reads as coverage. correctionFor, which IS live, is covered
+   above. */
 }
 
 {
@@ -5691,19 +5691,48 @@ sec('§210 one pass for what you own');
   eq('an empty shelf counts nothing', L.ownedCounts([]), {});
   eq('and so does no shelf at all', L.ownedCounts(undefined), {});
 
-  /* shelfFilter takes the map when it is given one and builds its own when
-     it is not, so a caller that forgets is slower and never wrong. */
+  /* Which of them can be poured tonight, by the same one-pass rule.
+     pourable did the identical scan and was missed the first time: it was
+     called once per product in shelfFilter, immediately after the count
+     lookup that no longer needed a scan. */
+  const open = L.openKeys(bottles);
+  eq('an open bottle is open', open['Ardbeg 10'], 1);
+  eq('one open and one sealed is still open', open['Weller 12'], 1);
+  eq('a bottle that is gone is not', open['Old Elk'], undefined);
+  // A whisky whose only bottle is sealed: owned, and not pourable.
+  const sealedOnly = [{ id: 'B7', k: 'Longrow 18', status: 'sealed' }];
+  eq('sealed only is owned', L.ownedCounts(sealedOnly)['Longrow 18'], 1);
+  eq('and not open', L.openKeys(sealedOnly)['Longrow 18'], undefined);
+  ['Ardbeg 10', 'Weller 12', 'Old Elk', 'Longrow 18'].forEach(k => {
+    eq('openKeys agrees with pourable for ' + k,
+      !!open[k], L.pourable(k, bottles));
+  });
+
+  // The two together, which is what every caller actually wants.
+  const ix = L.shelfIndex(bottles);
+  eq('the index carries both', Object.keys(ix).sort(), ['counts', 'open']);
+  eq('and they are the same two maps',
+    [ix.counts['Ardbeg 10'], ix.open['Ardbeg 10']], [2, 1]);
+
+  /* shelfFilter takes the index when it is given one and builds its own
+     when it is not, so a caller that forgets is slower and never wrong. */
   const products = [{ k: 'Ardbeg 10', name: 'Ardbeg 10', sub: 'scotch' },
                     { k: 'Old Elk', name: 'Old Elk', sub: 'rye' }];
-  eq('given the map, only what is owned survives',
-    L.shelfFilter(products, bottles, { status: 'all' }, counts)
+  eq('given the index, only what is owned survives',
+    L.shelfFilter(products, bottles, { status: 'all' }, ix)
       .map(p => p.name), ['Ardbeg 10']);
   eq('and without it, the same answer',
     L.shelfFilter(products, bottles, { status: 'all' }).map(p => p.name),
     ['Ardbeg 10']);
-  eq('a map that disagrees with the shelf is the map that is used',
+  eq('an index that disagrees with the shelf is the index that is used',
     L.shelfFilter(products, bottles, { status: 'all' },
-      { 'Old Elk': 1 }).map(p => p.name), ['Old Elk']);
+      { counts: { 'Old Elk': 1 }, open: {} }).map(p => p.name), ['Old Elk']);
+  eq('the open filter reads the index, not the bottles',
+    L.shelfFilter(products, bottles, { status: 'open' }, ix)
+      .map(p => p.name), ['Ardbeg 10']);
+  eq('and the sealed filter is its complement',
+    L.shelfFilter(products, bottles, { status: 'sealed' }, ix)
+      .map(p => p.name), []);
 }
 
 /* §211  the three decisions that were made inside a drawing -----------
@@ -5850,6 +5879,71 @@ sec('§212 writing one entry of a map');
   eq('the map keys are all sync keys',
     L.MAP_KEYS.filter(k => ['edits', 'custom', 'deleted', 'favs', 'deadGaps',
       'upcs'].indexOf(k) < 0), []);
+}
+
+/* §213  removing a run, and not logging one twice ---------------------
+ *
+ * Peat Is a Postcode reached the log twice: the first Poured it appeared to
+ * fail — the write was being refused by the database at the time — so it
+ * was pressed again.
+ *
+ * Two halves. Cleaning it up has to actually clean it up: a run writes a
+ * flight entry AND one pour per bottle in the cast, so dropping the row you
+ * can see left the pours under it. And the second press should be a
+ * decision rather than an accident.
+ */
+sec('§213 removing a run takes its pours');
+{
+  const history = [
+    { kind: 'flight', flight: 'PEAT IS A POSTCODE', at: '2026-09-03',
+      pours: ['Ardbeg 10', 'Lagavulin 16'] },
+    { kind: 'pour', k: 'Ardbeg 10', at: '2026-09-03' },
+    { kind: 'pour', k: 'Lagavulin 16', at: '2026-09-03' },
+    // Poured on its own, a day earlier: nothing to do with the run.
+    { kind: 'pour', k: 'Ardbeg 10', at: '2026-09-02' },
+    // Poured the same evening but not part of the cast.
+    { kind: 'pour', k: 'Talisker 10', at: '2026-09-03' }
+  ];
+
+  const cut = L.histDropRun(history, 0);
+  eq('the run and its two pours go', cut.also.length, 2);
+  eq('what is left is the other evening and the other bottle',
+    cut.list.map(x => x.k + ' ' + x.at),
+    ['Ardbeg 10 2026-09-02', 'Talisker 10 2026-09-03']);
+  eq('and the entry itself comes back for the undo',
+    cut.entry.flight, 'PEAT IS A POSTCODE');
+
+  /* THE PAIRING: undo has to put back the whole of what the X removed, not
+     just the row that was pressed. */
+  eq('undo restores the run and its pours',
+    L.histRestoreRun(cut.list, 0, cut.entry, cut.also), history);
+
+  // One pour per key, because that is what the run logged. A bottle poured
+  // twice that evening keeps the second.
+  const twice = [
+    { kind: 'flight', flight: 'F', at: '2026-09-03', pours: ['Ardbeg 10'] },
+    { kind: 'pour', k: 'Ardbeg 10', at: '2026-09-03' },
+    { kind: 'pour', k: 'Ardbeg 10', at: '2026-09-03' }
+  ];
+  eq('a second pour of the same bottle that evening stays',
+    L.histDropRun(twice, 0).list.length, 1);
+
+  // A pour row is still just a pour row.
+  eq('removing a pour removes one entry',
+    L.histDropRun(history, 1).also, []);
+  eq('and it is the right one',
+    L.histDropRun(history, 1).list.length, history.length - 1);
+  eq('an index off the end removes nothing',
+    L.histDropRun(history, 99).entry, null);
+
+  /* The other half: the same flight, the same day. */
+  eq('logged today already', L.alreadyRun(history, 'PEAT IS A POSTCODE',
+    '2026-09-03'), true);
+  eq('not tomorrow', L.alreadyRun(history, 'PEAT IS A POSTCODE',
+    '2026-09-04'), false);
+  eq('and not a different flight',
+    L.alreadyRun(history, 'WHEAT, TURNED UP', '2026-09-03'), false);
+  eq('an empty log has run nothing', L.alreadyRun([], 'F', '2026-09-03'), false);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
