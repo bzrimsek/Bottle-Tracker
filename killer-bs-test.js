@@ -4281,8 +4281,10 @@ sec('§186 a flight prompt is not a tasting note');
     ['nose', 'palate', 'finish', 'colour']
       .map(k => L.enhanceDiff(withPrompt, real).tn[k]),
     ['apple', 'pear', 'oak', 'amber']);
+  // An empty string, not null — see §192. Firebase drops a null key, so a
+  // null tombstone never survived to clear anything.
   eq('and the prompt is cleared with it, or it is queued for ever',
-    L.enhanceDiff(withPrompt, real).tnFrom, null);
+    L.enhanceDiff(withPrompt, real).tnFrom, '');
   eq('a note you wrote yourself is never replaced',
     (L.enhanceDiff(mine, real) || {}).tn.nose, 'a');
   eq('a bottle with no note at all is filled',
@@ -4501,6 +4503,63 @@ sec('§191 an addition is not an overwrite');
   eq('an empty batch splits into nothing',
     [L.pendingSplit([]).adds.length, L.pendingSplit(null).changes.length],
     [0, 0]);
+}
+
+/* §192  null is not a value Firebase will keep -------------------------
+ *
+ * 161 bottles were filled in and the queue still said 201.
+ *
+ * enhanceDiff cleared the flight-prompt marker by writing tnFrom: null
+ * into S.edits. `edits` is in SYNC_KEYS, and Firebase DELETES a key whose
+ * value is null rather than storing it — so the tombstone was stripped on
+ * the way up, came back absent, and mergeCatalog's Object.assign let the
+ * base's own tnFrom through again on every load. The marker was immortal.
+ *
+ * Two defences, because either alone leaves a hole: the tombstone is a
+ * value that survives the round trip, and a note with a recorded source
+ * outranks a leftover marker whatever happened to the marker.
+ */
+sec('§192 a cleared marker has to survive the round trip');
+{
+  const prompt = { k: 'b', name: 'B', tnFrom: 'WHEAT, TURNED UP',
+                   tn: { nose: 'x', palate: 'y', finish: 'z' } };
+  const real = { nose: 'a', palate: 'b', finish: 'c' };
+  const take = L.enhanceDiff(prompt, real);
+
+  eq('the tombstone is not null', take.tnFrom === null, false);
+  eq('it is an empty string', take.tnFrom, '');
+  // The actual test: what Firebase keeps. A null key is dropped; an empty
+  // string comes back as an empty string.
+  const throughFirebase = o => {
+    const out = {};
+    Object.keys(o).forEach(k => { if (o[k] !== null) out[k] = o[k]; });
+    return out;
+  };
+  eq('and it is still there after a round trip',
+    'tnFrom' in throughFirebase(take), true);
+  eq('where a null would have been dropped',
+    'tnFrom' in throughFirebase({ tnFrom: null }), false);
+  // Merged over the base, the cleared marker has to win.
+  eq('so the base marker does not come back',
+    L.mergeCatalog({ b: prompt }, { b: throughFirebase(take) }).b.tnFrom, '');
+  eq('and the bottle leaves the queue',
+    L.needsEnhancing(L.mergeCatalog({ b: prompt },
+      { b: throughFirebase(take) }).b), false);
+
+  // The second defence, which repairs the bottles already filled without
+  // asking the service about any of them again.
+  eq('a real note with a stale marker is not queued',
+    L.needsEnhancing({ k: 'a', name: 'A', tnFrom: 'WHEAT, TURNED UP',
+      tn: { nose: 'x', palate: 'y', finish: 'z' }, tnSrc: 'model' }), false);
+  eq('a review-sourced note counts the same',
+    L.needsEnhancing({ k: 'a', name: 'A', tnFrom: 'X',
+      tn: { nose: 'x' }, tnSrc: 'review' }), false);
+  eq('but a flight prompt with no source still is',
+    L.needsEnhancing(prompt), true);
+  eq('and a bottle with no note at all still is',
+    L.needsEnhancing({ k: 'c', name: 'C' }), true);
+  eq('a source with no note is not a note',
+    L.needsEnhancing({ k: 'd', name: 'D', tnSrc: 'model' }), true);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
