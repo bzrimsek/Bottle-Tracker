@@ -5946,5 +5946,83 @@ sec('§213 removing a run takes its pours');
   eq('an empty log has run nothing', L.alreadyRun([], 'F', '2026-09-03'), false);
 }
 
+/* §214  a backup you can hold, and a number that is never NaN ---------
+ *
+ * The CSV export carries bottles and products: twelve columns. It does NOT
+ * carry the history, the custom flights, the edits, the favourites, the
+ * barcodes, the wishlist or the dismissals — so 36 designed flights, the
+ * least replaceable thing on this shelf, lived in one browser and one
+ * Firebase node and in no file BZ could hold.
+ *
+ * A restore overwrites everything and has no undo, so what it is about to
+ * do is decided before anything is written, and can be refused.
+ */
+sec('§214 a backup that is actually a backup');
+{
+  const KEYS = ['bottles', 'customFlights', 'history', 'favs'];
+  const S_ = { bottles: [{ id: 'B1' }, { id: 'B2' }],
+               customFlights: [{ title: 'PEAT IS A POSTCODE' }],
+               history: [], favs: { 'Ardbeg 10': 1 } };
+
+  const b = L.makeBackup(S_, KEYS, 1788464486184);
+  eq('it says what it is', [b.app, b.format], ['killer-bs', L.BACKUP_FORMAT]);
+  eq('and when', b.at, 1788464486184);
+  eq('and it holds every key it was given',
+    Object.keys(b.keys).sort(), ['bottles', 'customFlights', 'favs', 'history']);
+  eq('including the flights, which the CSV never carried',
+    b.keys.customFlights[0].title, 'PEAT IS A POSTCODE');
+
+  /* THE PAIRING: write it, read it, and get the same shelf back. A backup
+     that does not restore is not a backup. */
+  const read = L.readBackup(JSON.stringify(b), KEYS);
+  eq('it reads back', read.ok, true);
+  eq('identical, key for key', read.keys, S_);
+  eq('and says what it is about to replace', read.summary,
+    'bottles 2, customFlights 1, history 0, favs 1');
+
+  // Anything else is refused by name, not half-applied.
+  eq('not JSON at all', L.readBackup('{oops', KEYS).ok, false);
+  eq('and says so', L.readBackup('{oops', KEYS).why,
+    'That file is not readable JSON.');
+  eq('somebody else\u2019s JSON', L.readBackup('{"a":1}', KEYS).ok, false);
+  eq('a newer format is refused rather than half-read',
+    L.readBackup(JSON.stringify({ app: 'killer-bs', format: 99, keys: {} }),
+      KEYS).why, 'That backup was written by a newer version.');
+  eq('and a backup holding nothing this version reads',
+    L.readBackup(JSON.stringify({ app: 'killer-bs', format: 1,
+      keys: { somethingElse: 1 } }), KEYS).ok, false);
+
+  // A key absent from the file leaves what is on the device alone, rather
+  // than blanking it — restoring an old backup must not delete newer things.
+  const partial = L.readBackup(JSON.stringify(
+    { app: 'killer-bs', format: 1, keys: { bottles: [{ id: 'B9' }] } }), KEYS);
+  eq('only the keys the file carries come back',
+    Object.keys(partial.keys), ['bottles']);
+  eq('a null value is not a restore either',
+    Object.keys(L.readBackup(JSON.stringify({ app: 'killer-bs', format: 1,
+      keys: { bottles: [{ id: 'B9' }], favs: null } }), KEYS).keys), ['bottles']);
+}
+
+sec('\u00a7214b a number, or nothing, but never NaN');
+{
+  eq('a number is a number', L.toNum('92'), 92);
+  eq('and a real one stays', L.toNum(94.8), 94.8);
+  eq('a proof written as prose still reads', L.toNum('107 proof'), 107);
+  eq('blank is nothing', L.toNum(''), null);
+  eq('missing is nothing', L.toNum(undefined), null);
+  eq('null is nothing', L.toNum(null), null);
+  eq('and junk is nothing, not NaN', L.toNum('n/a'), null);
+  eq('nor is a bare word', L.toNum('abc'), null);
+
+  /* Why it matters: NaN compares false against itself, so a whisky with a
+     NaN proof is never equal to anything, sorts unpredictably, and travels
+     to the shared library where everybody gets it. */
+  eq('a product built from junk has no proof rather than a NaN one',
+    L.normalizeProduct({ name: 'X', proof: 'n/a' }).proof, null);
+  eq('and no price', L.normalizeProduct({ name: 'X', msrp: 'ask' }).msrp, null);
+  eq('while a good one comes through',
+    L.normalizeProduct({ name: 'X', proof: '92' }).proof, 92);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

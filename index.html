@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Killer B's Bottle Tracker — Whisky Shelf & Tasting Curriculum PWA
-     Version : v1.5.1  Build 2026-09-03 04:35 PM ET
+     Version : v1.5.2  Build 2026-09-03 07:32 PM ET
      Author  : BiZStoryGuru LLC
      Deploy  : upload index.html + sw.js + manifest.json + data.json
                + mark.png + icon-192.png + icon-512.png to GitHub repo root
@@ -11,6 +11,7 @@
 ============================================================ -->
 <!--
 CHANGELOG
+// v1.5.2  2026-09-03  Fortification, from the second review pass.
 // v1.5.1  2026-09-03  Everything the code review found, fixed.
 // v1.5.0  2026-09-03  Renumbered to 1.5.0 at BZ's request.
 // v1.26.39  2026-09-03  Removing a run removes the pours it logged, and a flight is not logged twice by accident.
@@ -20,7 +21,6 @@ CHANGELOG
 // v1.26.35  2026-09-03  An admin can rename an entry in the shared library.
 // v1.26.34  2026-09-03  An empty list on this device and nothing on the account are the same state.
 // v1.26.33  2026-09-03  Comparing what is on the account no longer depends on key order.
-// v1.26.32  2026-09-03  A load hands over whatever the account is missing, as soon as it completes.
 // Older entries are in CHANGELOG.md.
 -->
 <html lang="en">
@@ -170,7 +170,13 @@ nav{box-shadow:0 -1px 0 rgba(26,22,19,.10), 0 -8px 18px rgba(26,22,19,.06)}
    should not compete with the suggestion itself. */
 .dismiss{flex:none;width:26px;height:26px;padding:0;margin-left:6px;
   border:none;background:transparent;color:var(--line);font-size:17px;
-  line-height:1;cursor:pointer;align-self:flex-start}
+  line-height:1;cursor:pointer;align-self:flex-start;position:relative}
+/* It LOOKS 26px, because a heavier X would compete with the row it sits on,
+   and it is 44 tall to the thumb. Grown mostly downward and to the right:
+   the 6px gap to its left belongs to the control beside it, and stealing
+   that would send taps meant for a neighbour to the button that deletes. */
+.dismiss::after{content:'';position:absolute;top:-9px;right:-6px;bottom:-9px;
+  left:-2px}
 .dismiss:hover,.dismiss:active{color:var(--rust)}
 .toastact{background:none;border:none;color:var(--gold);font:inherit;
   font-size:12.5px;text-decoration:underline;margin-left:12px;cursor:pointer;
@@ -1030,8 +1036,8 @@ button.bar.tappable:hover .track,button.bar.tappable:focus-visible .track{
 
 <script>
 'use strict';
-const APP_VERSION = '1.5.1';
-const BUILD_TIME  = '2026-09-03 04:35 PM ET';
+const APP_VERSION = '1.5.2';
+const BUILD_TIME  = '2026-09-03 07:32 PM ET';
 
 /* =====================================================================
    PURE LOGIC — every function below is called by the test harness.
@@ -3442,13 +3448,27 @@ L.proofInTen = function (band, proof) {
   return proof >= lo && proof < lo + 10;
 };
 
+/* A number, or nothing — never NaN.
+
+   parseFloat('n/a') is NaN, and NaN stored in proof or msrp is worse than a
+   blank: it sorts unpredictably, compares false against itself, renders as
+   nothing in particular, and travels to the shared library where everybody
+   gets it. Fifteen of the eighteen parseFloat calls in this file had no
+   guard; the three that mattered — the ones whose result is SAVED — go
+   through here. */
+L.toNum = function (v) {
+  if (v === '' || v === undefined || v === null) return null;
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  return isFinite(n) ? n : null;
+};
+
 L.normalizeProduct = function (f) {
-  const num = v => (v === '' || v === undefined || v === null) ? null : parseFloat(v);
+  const num = L.toNum;
   const p = {
     k: (f.k || '').trim() || (f.name || '').trim(),
     name: (f.name || '').trim(),
     dist: (f.dist || '').trim(),
-    proof: parseFloat(f.proof),
+    proof: L.toNum(f.proof),
     // A guess from the name beats a default, and a null beats a wrong
     // guess: the form shows it as unset and asks rather than asserting.
     sub: (f.sub || L.guessSub(f.name, f.dist) || '').trim(),
@@ -4670,6 +4690,54 @@ L.findUrl = function (name, dist) {
     .join(' ');
   if (!q) return null;
   return 'https://www.google.com/search?q=' + encodeURIComponent(q + ' buy');
+};
+
+/* A backup that is actually a backup.
+
+   The CSV export carries bottles and products: twelve columns. It does not
+   carry the history, the custom flights, the edits, the favourites, the
+   barcodes, the wishlist or the dismissals — so the 36 designed flights,
+   which are the least replaceable thing on this shelf, existed in one
+   browser and one Firebase node and in no file BZ could hold.
+
+   Everything that is stored, in one file, with a version and a stamp so a
+   restore can say what it is about to do. */
+L.BACKUP_FORMAT = 1;
+
+L.makeBackup = function (state, keys, when) {
+  const out = { format: L.BACKUP_FORMAT, app: 'killer-bs', at: when || 0,
+                keys: {} };
+  (keys || []).forEach(k => { out.keys[k] = (state || {})[k]; });
+  return out;
+};
+
+// What a restore would do, decided before anything is written, so it can be
+// shown and refused. A file that is not one of ours is refused by name
+// rather than half-applied.
+L.readBackup = function (text, keys) {
+  let raw;
+  try { raw = JSON.parse(text); } catch (e) {
+    return { ok: false, why: 'That file is not readable JSON.' };
+  }
+  if (!raw || raw.app !== 'killer-bs' || !raw.keys) {
+    return { ok: false, why: 'That is not a Killer B\u2019s backup.' };
+  }
+  if (raw.format > L.BACKUP_FORMAT) {
+    return { ok: false, why: 'That backup was written by a newer version.' };
+  }
+  const take = {}, counts = [];
+  (keys || []).forEach(k => {
+    if (!(k in raw.keys)) return;
+    const v = raw.keys[k];
+    if (v === undefined || v === null) return;
+    take[k] = v;
+    counts.push(k + ' ' + (Array.isArray(v) ? v.length
+      : (typeof v === 'object' ? Object.keys(v).length : String(v).length ? 1 : 0)));
+  });
+  if (!Object.keys(take).length) {
+    return { ok: false, why: 'That backup holds nothing this version reads.' };
+  }
+  return { ok: true, at: raw.at || 0, keys: take, summary: counts.join(', ') };
 };
 
 L.CORRECTABLE = ['proof', 'age', 'fin', 'dist', 'sub', 'region', 'msrp',
@@ -6943,6 +7011,18 @@ const CAN_STORE = (function () {
   } catch (e) { return false; }
 })();
 
+/* Keys that would not read on the way in.
+
+   This matters far more than it looks. A discarded key leaves S holding the
+   EMPTY initial value for it — and that empty value is still treated as
+   this device's copy, so a newer local stamp meant an empty bottles array
+   won the comparison and was pushed over the account's good one. One
+   unreadable key wiped the shelf everywhere.
+
+   Recorded here, read by fbFirstLoad, which hands the decision to the
+   account when anything was lost. */
+const DISCARDED = [];
+
 function load() {
   if (!CAN_STORE) return;
   KEYS.forEach(k => {
@@ -6956,6 +7036,8 @@ function load() {
           || Array.isArray(S[k]) !== Array.isArray(val)) throw new Error('shape');
       S[k] = val;
     } catch (e) {
+      // Said out loud, not to a console nobody opens on a phone.
+      DISCARDED.push(k);
       console.warn('discarding unreadable ' + k, e);
       try { localStorage.removeItem('kb.' + k); } catch (e2) { /* nothing to do */ }
     }
@@ -6963,6 +7045,7 @@ function load() {
 }
 
 let _storageWarned = false;
+let _saveFailed = false;
 let _pushSoon = null;
 function save_() {
   // When this device last changed something. Stamped BEFORE the push, so
@@ -6988,12 +7071,47 @@ function save_() {
   }
   try {
     KEYS.forEach(k => localStorage.setItem('kb.' + k, JSON.stringify(S[k])));
+    _saveFailed = false;
   } catch (e) {
-    // Quota, almost always. Say so rather than failing silently, because the
-    // user is about to lose an edit they think landed.
-    if (typeof toast === 'function') toast('Could not save — storage is full.');
+    /* Quota, almost always. Said EVERY time, not once: a single toast an
+       hour ago is not a warning when every edit since has been landing
+       nowhere. The account still receives pushes, so the device and the
+       account drift apart with no other signal. */
+    if (typeof toast === 'function') {
+      toast('Could not save on this device \u2014 storage is full. '
+        + 'Back up and clear some space.');
+    }
+    if (!_saveFailed) appLog('local save failed: ' + ((e && e.message) || e));
+    _saveFailed = true;
     console.warn('save failed', e);
   }
+}
+
+/* Another tab of this app changed something.
+
+   Two tabs each hold their own S, and neither saw the other's writes: tab B
+   would save its stale copy straight over tab A's work, and the newer stamp
+   made it win the account comparison too. BZ has this open on a desktop and
+   a phone, and two desktop tabs is the same thing with a shorter fuse.
+
+   The rule is the one already used for the account: whoever is newer wins,
+   and here the other tab always is — it just wrote. */
+if (CAN_STORE) {
+  window.addEventListener('storage', ev => {
+    if (!ev.key || ev.key.indexOf('kb.') !== 0) return;
+    const k = ev.key.slice(3);
+    if (KEYS.indexOf(k) < 0) return;
+    try {
+      const val = JSON.parse(ev.newValue);
+      if (typeof S[k] !== typeof val
+          || Array.isArray(S[k]) !== Array.isArray(val)) return;
+      S[k] = val;
+    } catch (e) { return; }
+    appLog('another tab changed ' + k + '; took its copy');
+    rebuildCatalog();
+    renderShelf(); renderShelfFilters(); renderHome();
+    renderFlights(); renderPayline();
+  });
 }
 
 // Read order: your override, then the shared catalog. The UI shows which
@@ -10993,6 +11111,7 @@ function renderShop() {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 15000);
+      if (navigator.onLine === false) throw new Error('you are offline');
       const r = await fetch(L.lookupUrl(S.lookupUrl, q.trim()), { signal: ctrl.signal });
       clearTimeout(timer);
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -11210,6 +11329,53 @@ function renderSettings() {
   const imp = el('button', 'btn btn-sm', 'Import');
   imp.onclick = importDialog;
   row.appendChild(imp);
+
+  /* Everything, in one file. The CSV above is for spreadsheets and for
+     other apps; this is the one that brings the shelf back. */
+  const back = el('button', 'btn btn-sm', 'Back up everything');
+  back.onclick = () => {
+    const b = L.makeBackup(S, KEYS, Date.now());
+    const blob = new Blob([JSON.stringify(b)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'killer-bs-backup-' + L.todayISO() + '.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    appLog('backed up ' + KEYS.length + ' keys to a file');
+    toast('Backed up \u2014 keep it somewhere that is not this phone');
+  };
+  row.appendChild(back);
+
+  const rest = el('button', 'btn btn-sm', 'Restore');
+  rest.onclick = () => {
+    const f = document.createElement('input');
+    f.type = 'file';
+    f.accept = 'application/json,.json';
+    f.onchange = () => {
+      const file = f.files && f.files[0];
+      if (!file) return;
+      const r = new FileReader();
+      r.onload = () => {
+        const read = L.readBackup(String(r.result), KEYS);
+        if (!read.ok) { toast(read.why); return; }
+        // Said in full before anything is replaced, because a restore
+        // overwrites the shelf and there is no undo for it.
+        confirmDelete('everything on this device, replaced by that backup'
+          + (read.at ? ' from ' + new Date(read.at).toLocaleString() : '')
+          + ' \u2014 ' + read.summary, () => {
+          Object.keys(read.keys).forEach(k => { S[k] = read.keys[k]; });
+          save_(); rebuildCatalog();
+          renderShelf(); renderShelfFilters(); renderHome(); renderFlights();
+          renderPayline(); renderSettings();
+          appLog('restored from a backup: ' + read.summary);
+          toast('Restored');
+        });
+      };
+      r.readAsText(file);
+    };
+    f.click();
+  };
+  row.appendChild(rest);
 
   const reset = el('button', 'btn btn-sm ghost danger', 'Reset my changes');
   reset.onclick = () => confirmDelete('every change you have made', () => {
@@ -12041,7 +12207,12 @@ function editLibraryEntry(p, after) {
       fields.forEach(([k, , type]) => {
         const v = inputs[k].value.trim();
         if (!v) { delete next[k]; return; }
-        next[k] = type === 'number' ? parseFloat(v) : v;
+        // Never NaN into the shared library, where everybody would read it.
+        if (type === 'number') {
+          const n = L.toNum(v);
+          if (n === null) { delete next[k]; return; }
+          next[k] = n;
+        } else { next[k] = v; }
       });
       const now = Date.now();
       // A rename is a MOVE: written at the new key and cleared from the old
@@ -12067,13 +12238,35 @@ function editLibraryEntry(p, after) {
     const rm = el('button', 'btn ghost wide', 'Remove from the library');
     rm.onclick = () => confirmDelete(p.name + ' from the library', () => {
       const key = p._key || L.libKey(p.name);
+      /* Kept, so it can be put back. This is the only destructive action in
+         the app that changes what EVERYBODY sees, and it was the one with a
+         confirm and no undo — the wrong way round. A confirm asks whether
+         you meant it; an undo helps when you did mean it and were wrong. */
+      const gone = Object.assign({}, p);
+      delete gone._key;
       firebase.database().ref('bz-apps/whisky/shared')
         .update({ ['catalog/products/' + key]: null, stamp: Date.now() })
         .then(() => {
           delete LIB.products[key];
           appLog('library: removed ' + p.name);
           closeModal(); after();
-          toast('Removed');
+          toast('Removed for everybody', { label: 'Undo', action: () => {
+            firebase.database().ref('bz-apps/whisky/shared')
+              .update(L.fbEncode({ ['catalog/products/' + key]:
+                                     Object.assign({}, gone, { at: Date.now() }),
+                                   stamp: Date.now() }))
+              .then(() => {
+                LIB.products[key] = gone;
+                appLog('library: put ' + p.name + ' back');
+                after();
+                toast('Back in the library');
+              })
+              .catch(e => {
+                appLog('library: could not put ' + p.name + ' back: '
+                  + ((e && e.message) || e));
+                toast('Could not put it back: ' + ((e && e.message) || e));
+              });
+          } });
         }).catch(e => toast(e.message || String(e)));
     });
     m.appendChild(rm);
@@ -13112,6 +13305,7 @@ function productForm(existing) {
       try {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 12000);
+        if (navigator.onLine === false) throw new Error('you are offline');
         const r = await fetch(L.lookupUrl(S.lookupUrl, q), { signal: ctrl.signal });
         clearTimeout(timer);
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -14432,6 +14626,12 @@ const FBLOG = [];
    after it. Thirty seconds is generous for a model answering one bottle,
    and finite is the point. */
 function askLookup(name, ms) {
+  // Offline is not a failed lookup, and it is the commonest reason one
+  // fails: this gets used in shops, on a phone, in a basement. Said as
+  // itself rather than as a generic error twenty seconds later.
+  if (navigator.onLine === false) {
+    return Promise.reject(new Error('you are offline'));
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms || 30000);
   return fetch(L.lookupUrl(S.lookupUrl, name), { signal: ctrl.signal })
@@ -15061,7 +15261,16 @@ function fbFirstLoad() {
       // wholesale, so they only take the remote copy when the remote is the
       // newer of the two. That is the fix for a bought bottle and a flight
       // pour disappearing while the whisky stayed in the library.
-      const winner = L.syncDecision(S.updated, remote.updated);
+      /* A device that lost a key on the way in does not get to win.
+         Its copy of that key is the empty initial value, and "local wins"
+         would push that emptiness over the account. */
+      const lost = DISCARDED.length;
+      const winner = lost ? 'remote' : L.syncDecision(S.updated, remote.updated);
+      if (lost) {
+        appLog('could not read ' + DISCARDED.join(', ')
+          + ' from this device; taking the account copy instead');
+        toast('Some local data would not read \u2014 restored from your account');
+      }
       appLog('sync: local ' + (S.updated || 0) + ' vs account '
         + (remote.updated || 0) + ' \u2014 ' + winner + ' wins');
       SYNC_KEYS.forEach(k => {
@@ -15298,7 +15507,7 @@ function boot(data) {
   // Inside the scrolling screen, not on body: body is a flex column ending
   // with the nav, so anything appended after it lands below the bar.
   const f = el('footer');
-  f.innerHTML = 'Killer B\u2019s Bottle Tracker <span id="verString">v1.5.1</span>'
+  f.innerHTML = 'Killer B\u2019s Bottle Tracker <span id="verString">v1.5.2</span>'
     + ' \u00b7 <span id="buildTime"></span>';
   const home = document.getElementById('scr-home');
   if (home) home.appendChild(f);
@@ -15506,7 +15715,10 @@ $('#scanBtn').onclick = scanBarcode;
 // question is worth asking, which is the thing a new shelf cannot know.
 $('#addFlightBtn').onclick = () => showLessons();
 $('#overlay').onclick = e => { if (e.target.id === 'overlay') closeModal(); };
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+// Escape is handled once, near goBack, where it can close a modal and then
+// walk back a screen in the same order the back gesture uses. A second
+// handler here closed the modal and nothing else, so which of the two ran
+// depended on listener order.
 
 let MAPDATA = { world: [], states: {}, coast: [], distilleries: {},
                 ieDistilleries: {}, usDistilleries: {},
