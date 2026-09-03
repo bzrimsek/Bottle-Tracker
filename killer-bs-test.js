@@ -5429,5 +5429,58 @@ sec('§205 a load hands over what the account lacks');
     L.changedKeys(KEYS, S_, L.pushedFromRemote(KEYS, S_, {})), KEYS);
 }
 
+/* §206  the same data is the same data, whatever order it is in --------
+ *
+ * From BZ's log, on a load where the stamps were IDENTICAL and the account
+ * copy won outright:
+ *   fb push ok: 61647 bytes, edits, wish, deadGaps, proposals
+ *
+ * Those four are the merge keys, built with Object.assign(local, remote).
+ * Same content, different key order — and JSON.stringify is order
+ * sensitive, so they compared unequal to the copy just read and pushed 61KB
+ * with nothing in them changed. On every load, for ever.
+ *
+ * All three sides of the comparison now share one signature function.
+ * Object keys sorted; arrays left alone, because their order IS the data
+ * for bottles and history — a shelf sorted differently is not the same
+ * shelf.
+ */
+sec('§206 one signature for the same data');
+{
+  eq('key order does not make new data',
+    L.syncSig({ b: 1, a: 2 }), L.syncSig({ a: 2, b: 1 }));
+  eq('nested key order either',
+    L.syncSig({ x: { d: 1, c: 2 } }), L.syncSig({ x: { c: 2, d: 1 } }));
+  eq('a real difference is still a difference',
+    L.syncSig({ a: 1 }) === L.syncSig({ a: 2 }), false);
+  eq('array order IS the data',
+    L.syncSig([1, 2]) === L.syncSig([2, 1]), false);
+  eq('and an array of records keeps its order',
+    L.syncSig([{ id: 'B1' }, { id: 'B2' }])
+      === L.syncSig([{ id: 'B2' }, { id: 'B1' }]), false);
+  eq('a missing key has no signature', L.syncSig(undefined), undefined);
+
+  /* THE PAIRING, exactly as his log had it: the account wins, the merge
+     rebuilds the map, and the push that follows must be empty. */
+  const remote = { edits: { b: { proof: 1 }, a: { proof: 2 } } };
+  const merged = { edits: Object.assign({}, { a: { proof: 2 } }, remote.edits) };
+  eq('a merged map identical to the account pushes nothing',
+    L.changedKeys(['edits'], merged,
+      L.pushedFromRemote(['edits'], merged, remote)), []);
+  eq('and one genuinely edited still pushes',
+    L.changedKeys(['edits'], { edits: { a: { proof: 2 }, b: { proof: 9 } } },
+      L.pushedFromRemote(['edits'], merged, remote)), ['edits']);
+
+  // The three sites have to agree, or a signature written by one rule and
+  // read by another means everything always differs and nothing ever does.
+  const state = { bottles: [{ id: 'B1' }] };
+  const seeded = L.pushedFromRemote(['bottles'], state, state);
+  eq('what pushedFromRemote records, changedKeys reads as sent',
+    L.changedKeys(['bottles'], state, seeded), []);
+  const afterPush = { bottles: L.syncSig(state.bottles) };
+  eq('and what a landed push records, it reads the same way',
+    L.changedKeys(['bottles'], state, afterPush), []);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
