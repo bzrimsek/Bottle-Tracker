@@ -222,12 +222,18 @@ function step(n) {
   const chg = page.locator('#shopBack').first();
   if (await chg.isVisible()) { await chg.click(); await page.waitForTimeout(300); }
 
+  /* However many situations there are, every one of them has to draw.
+     This asserted exactly three and broke when a fourth was added, which
+     is a walk testing its own memory rather than the app: the thing worth
+     checking is that each tile leads somewhere, not that there are three
+     of them. */
   const choices = await page.locator('.modetile').count();
-  if (choices !== 3) failures.push('shop: ' + choices + ' situations offered, want 3');
-  else {
+  if (choices < 3) {
+    failures.push('shop: only ' + choices + ' situations offered');
+  } else {
     // Each situation in turn. Reaching the question again means pressing
     // Back, because the answer is remembered — which is the point of it.
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < choices; i++) {
       if (!(await page.locator('.modetile').count())) {
         const back = page.locator('#shopBack');
         if (await back.count()) {
@@ -262,9 +268,13 @@ function step(n) {
     await page.locator('nav button[data-scr="shop"]').click();
     await page.waitForTimeout(250);
     if (await chg2.isVisible()) { await chg2.click(); await page.waitForTimeout(300); }
+    /* By LABEL, not by position. Both of these picked a tile by index and
+       broke the moment a fourth mode was added between them — the walk
+       reported "no pills on the planning screen" when the screen was fine
+       and the click had gone somewhere else. */
     const modes = page.locator('.modetile');
-    if ((await modes.count()) === 3) {
-      await modes.nth(2).click();               // looking at it on a website
+    if (await modes.count() >= 3) {
+      await page.locator('.modetile', { hasText: 'website' }).first().click();
       await page.waitForTimeout(300);
       const ta = page.locator('#scr-shop textarea').first();
       if (!(await ta.count())) {
@@ -529,10 +539,12 @@ function step(n) {
     const chg3 = page.locator('#shopBack').first();
     if (await chg3.isVisible()) { await chg3.click(); await page.waitForTimeout(300); }
     const modes3 = page.locator('.modetile');
-    if ((await modes3.count()) !== 3) {
+    if ((await modes3.count()) < 3) {
       failures.push('shop: cannot reach the situation question');
     } else {
-      await modes3.nth(0).click();              // in a store, holding a bottle
+      // By label, so adding a situation cannot silently retarget this.
+      await page.locator('.modetile', { hasText: 'In a store' }).first()
+        .click();
       await page.waitForTimeout(350);
 
       // Typed one key at a time, the way a phone types. Anything that
@@ -1196,8 +1208,9 @@ function step(n) {
     const back = page.locator('#shopBack').first();
     if (await back.isVisible()) { await back.click(); await page.waitForTimeout(300); }
     const tiles = page.locator('.modetile');
-    if ((await tiles.count()) === 3) {
-      await tiles.nth(1).click();               // deciding what to buy next
+    if (await tiles.count() >= 3) {
+      await page.locator('.modetile', { hasText: 'Deciding what to buy' })
+        .first().click();
       await page.waitForTimeout(450);
     } else {
       failures.push('dimensions: could not reach the planning screen');

@@ -8188,5 +8188,169 @@ sec('§242 the people an admin can see');
     L.adminPeople(null, null, now).length, 0);
 }
 
+/* §243  evaluating an offer ------------------------------------------
+ *
+ * BZ gets a lot of release emails. The question is never what is in one,
+ * it is which two of these twelve are for him — and answering it by hand
+ * means typing each name into the shop.
+ *
+ * The parsing is deliberately dumb and the ranking does the work. A
+ * marketing email has no structure worth trusting, so a false name costs
+ * one wasted row and a missed name costs the thing the email was for.
+ */
+sec('§243 what is in this email for me');
+{
+  const email = [
+    'Hi Brian,',
+    "This week's allocated releases are now available:",
+    '1. Weller Full Proof \u2014 750ml $79.99',
+    '2. Ardbeg Corryvreckan  $89.99',
+    '\u2022 Glendronach 15 Revival',
+    '- Springbank 15 Year Old 750 ml $139.99',
+    'Buy now',
+    'Unsubscribe'
+  ].join('\n');
+
+  const names = L.offerNames(email);
+  eq('the bottles are found', names.length, 4);
+  eq('a price is not part of a name',
+    names.some(n => /\$/.test(n)), false);
+  eq('nor is a size', names.some(n => /750/.test(n)), false);
+  eq('nor the numbering', names[0], 'Weller Full Proof');
+  eq('a bullet is a bottle too',
+    names.indexOf('Glendronach 15 Revival') >= 0, true);
+  eq('the line introducing the list is not one of them',
+    names.some(n => /available/.test(n)), false);
+  eq('and nor is the furniture at the end',
+    names.some(n => /Unsubscribe|Buy now/i.test(n)), false);
+  eq('an empty paste finds nothing', L.offerNames('').length, 0);
+  eq('and neither does a link on its own',
+    L.offerNames('https://example.com/releases').length, 1);
+
+  /* The ranking. Every verdict traces to the shelf. */
+  const cat = {}, bottles = [];
+  const add = (k, name, dist, extra) => {
+    cat[k] = Object.assign({ k: k, name: name, dist: dist, sub: 'bourbon',
+      proof: 100 }, extra || {});
+    bottles.push({ k: k, status: 'open' });
+  };
+  // Six Wellers, all bottled by Buffalo Trace — the brand is not the house.
+  for (let i = 0; i < 6; i++) add('w' + i, 'Weller ' + i, 'Buffalo Trace');
+  add('own', 'Ardbeg Corryvreckan', 'Ardbeg', { sub: 'scotch' });
+
+  const ranked = L.rankOffer(
+    ['Ardbeg Corryvreckan', 'Weller Full Proof', 'Nothing Familiar'],
+    cat, bottles, [{ name: 'Nothing Familiar' }], []);
+
+  const by = {};
+  ranked.forEach(r => { by[r.name] = r; });
+  eq('a bottle you own says so', by['Ardbeg Corryvreckan'].verdict, 'have it');
+  /* The brand match: six Wellers on a shelf that records Buffalo Trace as
+     the distillery matched nothing until brands were counted separately. */
+  eq('a brand you buy is recognised even when the house differs',
+    by['Weller Full Proof'].verdict, 'worth a look');
+  eq('and says how many you have',
+    /6 of those/.test(by['Weller Full Proof'].why), true);
+  eq('a wishlist bottle leads', ranked[0].name, 'Nothing Familiar');
+  eq('and says why', by['Nothing Familiar'].verdict, 'wanted');
+
+  /* What the shelf cannot place is unknown, not bad. A verdict this
+     cannot support is worse than no verdict. */
+  const blind = L.rankOffer(['Utterly Unheard Of'], cat, bottles, [], []);
+  eq('an unplaceable bottle is unknown, not rejected',
+    blind[0].verdict, 'unknown');
+  eq('and it sinks below anything the shelf can speak to',
+    L.rankOffer(['Utterly Unheard Of', 'Weller Full Proof'],
+      cat, bottles, [], [])[1].verdict, 'unknown');
+
+  /* A thin axis is a reason on its own. */
+  const axes = [{ id: 'origin', label: 'Origin', pct: 67, have: 4, total: 6,
+    of: 'Scotch regions', gaps: [{ name: 'Lowland', n: 1, short: 2 }] }];
+  const axis = L.rankOffer(['Lowland Single Malt 12'], cat, bottles, [],
+    axes)[0];
+  eq('a bottle that fills the thinnest axis is worth a look',
+    axis.verdict, 'worth a look');
+  eq('and the axis is named', /Origin/.test(axis.why), true);
+
+  eq('nothing pasted ranks nothing',
+    L.rankOffer([], cat, bottles, [], []).length, 0);
+  eq('and a missing list is not an error',
+    L.rankOffer(null, null, null, null, null).length, 0);
+}
+
+/* §244  what one bottle does to the shape ----------------------------
+ *
+ * BZ: "should any new potential bottle tell you how it helps your radar
+ * chart?" It should, and it makes the shape chart the common frame every
+ * recommendation argues in rather than a separate picture.
+ *
+ * Honest about three things, which is the whole design: a bottle that
+ * clears a gap, a bottle that only counts toward one, and a bottle that
+ * moves nothing — which is most of them, and is silence rather than an
+ * argument against it.
+ */
+sec('§244 how a bottle helps the chart');
+{
+  const axes = [
+    { id: 'origin', label: 'Origin', pct: 67, have: 4, total: 6,
+      of: 'Scotch regions',
+      gaps: [{ name: 'Lowland', n: 2, short: 1 },
+             { name: 'Campbeltown', n: 1, short: 2 }] },
+    { id: 'breadth', label: 'Breadth', pct: 78, have: 7, total: 9,
+      of: 'categories',
+      gaps: [{ name: 'japanese', n: 2, short: 1 }] }
+  ];
+
+  /* One short: this bottle clears it and the axis moves. 4 of 6 becomes
+     5 of 6, which is 83%. */
+  const clears = L.axisEffect({ name: 'Auchentoshan 12', region: 'Lowland' },
+    axes);
+  eq('a bottle one short of a gap clears it', clears.clears, true);
+  eq('and the axis is named', clears.label, 'Origin');
+  eq('and the chart moves', clears.after, 83);
+  eq('said in words',
+    /Clears Lowland and takes Origin from 67% to 83%/
+      .test(L.axisEffectLine(clears)), true);
+
+  /* Two short: it counts, and says how many more are needed AFTER it. */
+  const toward = L.axisEffect({ name: 'Springbank', region: 'Campbeltown' },
+    axes);
+  eq('a bottle two short only counts toward it', toward.clears, false);
+  eq('the axis does not move yet', toward.after, toward.before);
+  eq('and it says what is still needed', toward.needs, 1);
+  eq('in words',
+    /1 more after this one/.test(L.axisEffectLine(toward)), true);
+
+  /* Clearing beats counting, whichever axis is thinner. */
+  const both = L.axisEffect(
+    { name: 'Auchentoshan Lowland', region: 'Lowland', sub: 'japanese' },
+    axes);
+  eq('clearing a gap wins over counting toward one', both.clears, true);
+
+  /* Most bottles do nothing to the chart, and that is silence rather than
+     a verdict against them. */
+  eq('a bottle that changes nothing says nothing',
+    L.axisEffect({ name: 'Buffalo Trace', sub: 'bourbon' }, axes), null);
+  eq('and the line is empty', L.axisEffectLine(null), '');
+  eq('no axes means no effect',
+    L.axisEffect({ name: 'Anything', region: 'Lowland' }, []), null);
+  eq('and a missing bottle is not an error',
+    L.axisEffect(null, axes), null);
+
+  /* A release email is only a name, and that is enough for a region or a
+     category — the fields it does not have are left alone rather than
+     guessed at. */
+  const byName = L.axisEffect({ name: 'Auchentoshan Lowland Single Malt' },
+    axes);
+  eq('a name alone can still place a bottle', !!byName, true);
+  eq('and it finds the right gap', byName.gap, 'Lowland');
+
+  /* Category gaps are stored lower-cased and are named the way the books
+     and the charts name them. */
+  const cat = L.axisEffect({ name: 'Nikka', sub: 'japanese' }, axes);
+  eq('a category gap is named properly',
+    /Clears Japanese/.test(L.axisEffectLine(cat)), true);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
