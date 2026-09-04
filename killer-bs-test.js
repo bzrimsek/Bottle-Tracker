@@ -8564,12 +8564,16 @@ sec('§247 the bar to publish is higher than the bar to ask');
  */
 sec('§248 an axis is covered and spread, not just covered');
 {
+  /* Breadth is STYLES now — ways of making whisky, not places it comes
+     from — so these fixtures set `style` rather than `sub`. Five of the
+     old nine buckets were a country wearing a different hat. */
   const mk = rows => {
     const cat = {}, bs = [];
-    rows.forEach(([n, sub], i) => {
+    rows.forEach(([n, style], i) => {
       for (let j = 0; j < n; j++) {
         const k = 's' + i + 'b' + j;
-        cat[k] = { k: k, name: k, sub: sub, dist: 'H' + i + j, proof: 100 };
+        cat[k] = { k: k, name: k, sub: 'scotch', style: style,
+                   dist: 'H' + i + j, proof: 100 };
         bs.push({ k: k, status: 'open' });
       }
     });
@@ -8597,7 +8601,7 @@ sec('§248 an axis is covered and spread, not just covered');
   eq('and coverage still reads honestly', one.pct, 11);
 
   /* The point of the change: full coverage alone no longer reads 100. */
-  const ALL = L.CORE_STYLES;
+  const ALL = L.CORE_MAKES;
   const lop = breadth(mk(ALL.map((sub, i) => [i ? 3 : 200, sub])));
   eq('every category covered', lop.coverPct, 100);
   eq('but one of them holding nearly everything is not perfect',
@@ -8690,6 +8694,22 @@ sec('§249 how much of the whisky world');
   const usGap = some.gaps.filter(g => g.name === 'United States')[0];
   eq('a part-reached country reports what it still needs', usGap.short, 9);
   eq('and what is already there', usGap.n, 3);
+
+  /* Every country on the list must be REACHABLE. France carried a depth
+     of three and no distillery mapped to it, so a French bottle could
+     never have been placed and the axis was asking for something it could
+     not count. Checked against the real map data, so adding a country
+     without a way to reach it fails here rather than on somebody's shelf. */
+  const realMap = require('fs').existsSync(__dirname + '/map.json')
+    ? JSON.parse(require('fs').readFileSync(__dirname + '/map.json', 'utf8'))
+    : null;
+  if (realMap) {
+    const unreachable = L.WHISKY_COUNTRIES.filter(c =>
+      !Object.keys(realMap.worldDist || {}).some(h => realMap.worldDist[h] === c)
+      && !Object.keys(realMap.subCountry || {}).some(k => realMap.subCountry[k] === c));
+    eq('every whisky country can actually be placed',
+      unreachable.join(',') || 'none', 'none');
+  }
 
   /* Without map.json the built-in category mapping still places a shelf. */
   const nomap = L.shelfAxes(
@@ -8825,6 +8845,117 @@ sec('§251 how far the finishing goes');
     /double wood/.test(L.axisAsk('finish', 'two woods')), true);
   eq('and for an unfinished bottle',
     /unfinished/.test(L.axisAsk('finish', 'unfinished')), true);
+}
+
+/* §252  every country has a way to be reached ------------------------
+ *
+ * France was on the list with a depth of 3 and nothing that could place a
+ * bottle there: no category maps to it and no distillery was named, so a
+ * French malt could never have counted and the axis was asking for
+ * something it had no way to see.
+ *
+ * The rule: a country on the axis must be reachable, either because a
+ * CATEGORY maps to it or because at least one HOUSE does. Anything else is
+ * a gap that can never close, which is worse than not listing the country
+ * at all.
+ */
+sec('§252 no country the app cannot see');
+{
+  /* The built-in mapping, which is what the harness has without map.json.
+     Every country it names must be one the axis knows about. */
+  Object.keys(L.SUB_COUNTRY).forEach(sub => {
+    const c = L.SUB_COUNTRY[sub];
+    eq('the category ' + sub + ' maps to a listed country',
+      L.WHISKY_COUNTRIES.indexOf(c) >= 0, true);
+  });
+
+  /* And every listed country has a depth, or worldReach would divide by
+     a bucket it does not know how to size. */
+  eq('every country has a depth',
+    L.WHISKY_COUNTRIES.every(c => L.COUNTRY_DEPTH[c] >= 1), true);
+
+  /* A country reachable only through a house needs map.json, so this
+     asserts the SHAPE rather than the contents: countryOf must be able to
+     place a bottle by its distillery alone. */
+  const placed = L.countryOf({ dist: 'Kavalan', sub: 'world' },
+    L.SUB_COUNTRY, { Kavalan: 'Taiwan' });
+  eq('a house can place a bottle on its own', placed, 'Taiwan');
+  eq('and a category still places one without a house',
+    L.countryOf({ dist: 'Anything', sub: 'irish' }, L.SUB_COUNTRY, {}),
+    'Ireland');
+  eq('a bottle nothing can place is placed nowhere',
+    L.countryOf({ dist: 'Unknown', sub: 'world' }, L.SUB_COUNTRY, {}), null);
+
+  /* Tequila maps to Mexico on the MAP and must not appear here: this axis
+     is the whisky world, and a tequila would have covered a country
+     without being one. */
+  eq('tequila is not a whisky country',
+    L.SUB_COUNTRY.tequila, undefined);
+  eq('and Mexico is not on the axis',
+    L.WHISKY_COUNTRIES.indexOf('Mexico'), -1);
+}
+
+/* §253  styles are not places -----------------------------------------
+ *
+ * BZ, twice: "breadth and world are kind of doing the same" and "breadth
+ * and world continue to be too similar for me to understand the diff." He
+ * was right, and the numbers said so — five of Breadth's nine buckets were
+ * a country wearing a different hat. Scotch IS Scotland. Japanese IS
+ * Japan. Only bourbon, rye, Tennessee and American single malt said
+ * anything World did not, and `world` was the very bucket World exists to
+ * break apart.
+ *
+ * The axis asks how whisky is MADE now: the grain, the still, the blend. A
+ * Scotch single malt, an Irish single malt and a Japanese single malt are
+ * ONE style and THREE countries, which is the true statement and the one
+ * the old buckets could not make.
+ */
+sec('§253 how it is made, not where it is from');
+{
+  /* The same bottle, three countries, one style. */
+  const sm = { style: 'single malt' };
+  eq('a Scotch single malt is a single malt',
+    L.makeOf({ sub: 'scotch', style: 'Single Malt' }), 'single malt');
+  eq('and so is a Japanese one',
+    L.makeOf({ sub: 'japanese', style: 'single malt' }), 'single malt');
+  eq('and an American one',
+    L.makeOf({ sub: 'american single malt' }), 'single malt');
+
+  /* Tennessee is a bourbon that had to be made somewhere particular. */
+  eq('Tennessee whiskey is made as bourbon',
+    L.makeOf({ sub: 'tennessee' }), 'bourbon');
+
+  /* Irish pot still is its own way of making and not a country. */
+  eq('single pot still is a style',
+    L.makeOf({ sub: 'irish', style: 'Single Pot Still' }),
+    'single pot still');
+  eq('and a plain Irish bottle falls back to it',
+    L.makeOf({ sub: 'irish' }), 'single pot still');
+
+  /* The style field wins over the category, because it is more precise. */
+  eq('a blended Scotch is blended, not a single malt',
+    L.makeOf({ sub: 'scotch', style: 'blended' }), 'blended');
+  eq('a blended malt is its own thing',
+    L.makeOf({ sub: 'scotch', style: 'blended malt' }), 'blended malt');
+  eq('and a single grain too',
+    L.makeOf({ sub: 'scotch', style: 'single grain' }), 'single grain');
+
+  /* A bottle nothing can place stays unplaced rather than being guessed
+     into a bucket. */
+  eq('an unknown style and category is not invented',
+    L.makeOf({ sub: 'tequila' }), null);
+  eq('and neither is nothing at all', L.makeOf({}), null);
+
+  /* The axes no longer restate each other: no bucket on one is a bucket
+     on the other. */
+  const clash = L.CORE_MAKES.filter(m =>
+    L.WHISKY_COUNTRIES.some(c => c.toLowerCase() === m));
+  eq('no style is also a country', clash.length, 0);
+  eq('and no category name survives as a style bucket',
+    L.CORE_MAKES.indexOf('scotch') < 0
+      && L.CORE_MAKES.indexOf('irish') < 0
+      && L.CORE_MAKES.indexOf('japanese') < 0
+      && L.CORE_MAKES.indexOf('world') < 0, true);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
