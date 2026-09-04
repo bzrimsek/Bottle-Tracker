@@ -8022,5 +8022,63 @@ sec('§240 what deleting an account clears');
     L.accountPaths('me', [], []).length, 6);
 }
 
+/* §241  a removed account cannot rebuild itself ----------------------
+ *
+ * BZ: "i want them to fully start over." Deleting the account was not
+ * enough on its own. The shelf lives on the person's device as well as in
+ * the account, and a first load that finds an EMPTY account pushes the
+ * local copy up to seed it — which is right when somebody signs in on a
+ * new phone, and exactly wrong the day after their account was removed.
+ * They would sign in and the shelf would rebuild itself from the browser
+ * that still had it.
+ *
+ * So a removal leaves a timestamp at wiped/<uid>, and a device whose shelf
+ * has not been touched since then clears itself instead of pushing. Work
+ * done AFTER the wipe is the person genuinely starting again and is
+ * theirs, which is what makes this a fresh start rather than a lockout.
+ */
+sec('§241 the tombstone a removal leaves');
+{
+  const wipedAt = 1000;
+
+  eq('a device holding a shelf older than the wipe starts empty',
+    L.shouldResetLocal(wipedAt, 900), true);
+  eq('and one touched at the very moment of it does too',
+    L.shouldResetLocal(wipedAt, 1000), true);
+
+  /* The line that makes this a reset and not a ban: anything done after
+     the account was cleared belongs to the person who did it. */
+  eq('a shelf built up AFTER the wipe is kept',
+    L.shouldResetLocal(wipedAt, 1100), false);
+
+  eq('an account never wiped is never reset',
+    L.shouldResetLocal(null, 900), false);
+  eq('nor by a zero', L.shouldResetLocal(0, 900), false);
+
+  /* A device with no timestamp of its own cannot claim to be newer. */
+  eq('a shelf with no stamp is treated as older',
+    L.shouldResetLocal(wipedAt, null), true);
+  eq('and so is an unreadable one',
+    L.shouldResetLocal(wipedAt, 'whenever'), true);
+  /* An ISO string is readable and is compared properly rather than being
+     thrown away. */
+  eq('a date string newer than the wipe is kept',
+    L.shouldResetLocal(Date.parse('2026-01-01T00:00:00Z'),
+      '2026-06-01T00:00:00Z'), false);
+
+  /* The wipe and the tombstone travel together, so a wipe can never land
+     without the thing that stops it being undone. */
+  const wipe = L.accountWipe('me', ['friend1'], []);
+  wipe['wiped/me'] = 2000;
+  eq('the tombstone is a timestamp, not a null',
+    wipe['wiped/me'], 2000);
+  eq('while everything else in the update is a null',
+    Object.keys(wipe).filter(k => k !== 'wiped/me')
+      .every(k => wipe[k] === null), true);
+  /* And it is not in accountPaths, which is a list of things to CLEAR. */
+  eq('the tombstone is not something the wipe clears',
+    L.accountPaths('me', [], []).indexOf('wiped/me'), -1);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

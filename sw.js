@@ -1,6 +1,6 @@
 // Killer B's Bottle Tracker service worker.
 // CACHE_NAME is written by bump.py — never by hand.
-const CACHE_NAME = 'killer-bs-v1.6.34';
+const CACHE_NAME = 'killer-bs-v1.6.36';
 
 // The shell: everything needed to open the app with no network.
 const SHELL = ['./', './index.html', './manifest.json',
