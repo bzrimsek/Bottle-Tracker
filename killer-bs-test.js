@@ -3964,9 +3964,21 @@ eq('an obscure bottle is not thereby hard to find',
 eq('a well-known allocated bourbon is still allocated',
   L.findability('Weller 12 Year', { obsc: 'known' }), 'allocated');
 
-// Unknown ranks between a hunt and an allocated release: 0 < 1 < 2 < 3.
-eq('findability ranks shelf, hunt, unknown, allocated',
-  ['shelf', 'hunt', null, 'allocated'].map(L.findRank), [0, 1, 2, 3]);
+/* Unknown ranks LAST, changed 2026-09-03. It used to sit between a hunt
+   and an allocated release, on the reasoning that not knowing is no reason
+   to promote or bury. BZ: "if we don't know, its not likely on shelves" —
+   a bottle genuinely stocked everywhere is the easy thing for a source to
+   say, so silence leans scarce. */
+eq('findability ranks shelf, hunt, allocated, then unknown',
+  ['shelf', 'hunt', 'allocated', null].map(L.findRank), [0, 1, 2, 3]);
+eq('anything unrecognised is treated as unknown',
+  L.findRank('who knows'), 3);
+// And the candidate sort reads that one rule rather than a second copy —
+// there WAS a second copy, with different numbers, silently overriding it.
+eq('the candidate sort puts what you can buy first',
+  [{ find: 'allocated' }, {}, { find: 'shelf' }, { find: 'hunt' }]
+    .sort(L.byAvailability).map(b => b.find || 'unknown'),
+  ['shelf', 'hunt', 'allocated', 'unknown']);
 
 sec('§177 nearest, and on which axis');
 // Worked out by hand. cand sits at 118 proof, 5 years, $25, Oloroso,
@@ -6252,6 +6264,73 @@ sec('§218 what a bottle is called on its own screen');
   // rather than invented — an added date nobody recorded is a fiction.
   eq('an undated bottle says only what is known',
     L.bottleLabel({ id: 'B001', status: 'open' }, 0, 1), 'Open');
+}
+
+/* §219  what an ask has earned ----------------------------------------
+ *
+ * BZ, after twenty seconds spent learning that nobody makes another Arran:
+ * "another wild goose chase... can you track success and fails for each as
+ * part of the ranking?"
+ *
+ * deadGaps was binary and permanent: proven impossible, or not. Everything
+ * between — an ask that comes back thin three times running — kept its
+ * place at the top of the list and kept costing twenty seconds to
+ * disappoint. This is the tally in between.
+ */
+sec('§219 an ask is ranked by what it has produced');
+{
+  const arran = { kind: 'axis', name: 'Another Arran' };
+  const lowland = { kind: 'axis', name: 'A Lowland single malt' };
+  const fresh = { kind: 'axis', name: 'A rye worth owning' };
+
+  eq('an ask nobody has tried has no opinion either way',
+    L.askScore(undefined), 0);
+  eq('and neither has an empty record', L.askScore({ ok: 0, no: 0 }), 0);
+  eq('one find is worth one', L.askScore({ ok: 1, no: 0 }), 1);
+  /* An empty hand costs more than a find gains: the price of a bad ask is
+     twenty seconds of waiting, and the gain of a good one is a bottle the
+     next ask down would probably have found too. */
+  eq('one empty hand costs more than one find gains',
+    L.askScore({ ok: 0, no: 1 }), -1.5);
+  eq('and they net out', L.askScore({ ok: 2, no: 1 }), 0.5);
+
+  let st = {};
+  st = L.recordAsk(st, arran, 0);
+  st = L.recordAsk(st, arran, 0);
+  st = L.recordAsk(st, lowland, 4);
+  eq('two empty hands are recorded as two',
+    [st[L.gapKey(arran)].ok, st[L.gapKey(arran)].no], [0, 2]);
+  eq('and a find as a find',
+    [st[L.gapKey(lowland)].ok, st[L.gapKey(lowland)].no], [1, 0]);
+  eq('recordAsk does not mutate what it was given',
+    Object.keys({}).length, 0);
+
+  /* THE ORDER, which is the whole point: the one that keeps failing sinks
+     BELOW the one nobody has tried, rather than holding the top. */
+  eq('what works first, untried next, what keeps failing last',
+    L.rankAsks([arran, fresh, lowland], st).map(a => a.name),
+    ['A Lowland single malt', 'A rye worth owning', 'Another Arran']);
+  eq('with no record at all, the order it came in is kept',
+    L.rankAsks([arran, fresh, lowland], {}).map(a => a.name),
+    ['Another Arran', 'A rye worth owning', 'A Lowland single malt']);
+  eq('and nothing is dropped by ranking',
+    L.rankAsks([arran, fresh, lowland], st).length, 3);
+
+  // A failure fades rather than ruling the ask out for ever — that is what
+  // deadGaps is still for. Two more finds and Arran is worth asking again.
+  // Arran stands at two empty hands and nothing found: 0 - 3 = -3.
+  let back = st;
+  eq('where it starts', L.askScore(back[L.gapKey(arran)]), -3);
+  back = L.recordAsk(back, arran, 3);
+  eq('one find: 1 - 3', L.askScore(back[L.gapKey(arran)]), -2);
+  back = L.recordAsk(back, arran, 3);
+  eq('two finds: 2 - 3', L.askScore(back[L.gapKey(arran)]), -1);
+  back = L.recordAsk(back, arran, 3);
+  eq('three pulls it level with an ask nobody has tried: 3 - 3',
+    L.askScore(back[L.gapKey(arran)]), 0);
+  eq('so it is back among the askable',
+    L.rankAsks([arran, fresh], back).map(a => a.name),
+    ['Another Arran', 'A rye worth owning']);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
