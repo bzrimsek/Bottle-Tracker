@@ -2,6 +2,14 @@
 
 Newest first. The file header in index.html carries the headlines; the full entries live here.
 
+## v1.6.32  ·  2026-09-04 10:03 AM ET
+
+A fill run survives its own modal. BZ tapped the backdrop mid-run and the progress went with it: the counts lived in a closure and the only element showing them had been thrown away, so a run that was still going had no face, no stop button and no way back - and pressing Fill again refused, because something was already running. A run is a thing that is happening rather than a thing being displayed, so it lives in LIB.fill now and the modal is only a view of it. Pressing Fill while one is going reopens that view with live progress instead of refusing, and the button says how far along it is. The backdrop no longer dismisses this particular sheet at all, because an accidental tap should not be able to hide something that is spending money; Hide this, inside the sheet, is the deliberate way out and what it hides can be brought back. The counts are written by querying the elements each tick rather than holding references to them, which is what broke - a detached element accepts writes and shows nobody. Checked by driving the whole accident: start a run, tap the backdrop, hide it deliberately, reopen it, and watch it finish into the review screen. 2178 assertions.
+
+## v1.6.31  ·  2026-09-04 09:58 AM ET
+
+The six headline tiles are centred, all six of them. Centring was put on .tile last time and five of the six ignored it: a tappable tile is a button, and the button rule sits later in the file and is more specific, so it kept its own text-align left. Only shelf value, the one plain label among them, actually moved - which is why the row looked like five left-aligned boxes with one centred number in the middle of it. Fixed on the rule that was winning rather than by piling specificity on the one that was losing, and checked by reading the computed style off all six rather than by looking at it. 2178 assertions.
+
 ## v1.6.30  ·  2026-09-04 09:42 AM ET
 
 The 2x2 row labels stack instead of standing on their side. Rotated text asks the reader to tilt their head to learn which row they are looking at, and at 11px in a narrow column BOUGHT AGAIN and BOUGHT ONCE ran the whole height of the grid. They are horizontal now, wrapping to two short lines in a column just wide enough for the longer word, and the column narrows on a phone rather than the type shrinking to nothing. 2178 assertions.
