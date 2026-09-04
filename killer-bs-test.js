@@ -7892,5 +7892,69 @@ sec('§238 what you could pour tonight');
     L.tonight(flights, cat, [], hist).length, 0);
 }
 
+/* §239  what a library fill is allowed to write ----------------------
+ *
+ * BZ ran a fill and got PERMISSION_DENIED on the write. The rules require
+ * every library entry to keep `name` and `at`, and validate runs against
+ * the entry AFTER the merge — so adding a proof to an old imported entry
+ * that never carried an `at` failed the rule. Those are precisely the thin
+ * entries a fill exists to repair.
+ */
+sec('§239 a fill writes named fields, name and at');
+{
+  const found = [
+    { k: 'a', name: 'Thin One', missing: ['proof'],
+      got: { proof: 100, dist: 'A House', name: 'Thin One' } },
+    { k: 'b', name: 'Has A Proof', missing: ['notes'],
+      got: { proof: 90, tn: { nose: 'x' } } },
+    { k: 'c', name: 'Not Ticked', missing: ['proof'], got: { proof: 95 } }
+  ];
+  const current = {
+    a: { name: 'Thin One' },                       // no `at` — the failing case
+    b: { name: 'Has A Proof', at: 1, proof: 107 }, // already has a proof
+    c: { name: 'Not Ticked', at: 1 }
+  };
+  const w = L.libraryFillWrite(found, { a: true, b: true, c: false },
+    current, 5000);
+
+  eq('an unticked entry is not written',
+    Object.keys(w.updates).some(k => k.indexOf('c/') === 0), false);
+  eq('two entries are written', w.names.length, 2);
+
+  /* The fix: name and at travel with every entry, so the rule that runs
+     against the merged entry can pass. */
+  eq('the name is carried', w.updates['a/name'], 'Thin One');
+  eq('and a timestamp', w.updates['a/at'], 5000);
+  eq('along with what was found', w.updates['a/proof'], 100);
+  eq('and the rest of it', w.updates['a/dist'], 'A House');
+
+  /* A lookup fills a gap; it does not settle a disagreement. */
+  eq('a field the library already holds is left alone',
+    w.updates['b/proof'], undefined);
+  eq('but a genuinely missing one is written',
+    !!w.updates['b/tn'], true);
+
+  /* Nothing useful means nothing written at all, not an entry rewritten
+     with only a fresh timestamp. */
+  const nothing = L.libraryFillWrite(
+    [{ k: 'd', name: 'Full', got: { proof: 90 } }], { d: true },
+    { d: { name: 'Full', at: 1, proof: 90 } }, 5000);
+  eq('an entry with nothing to add is skipped', nothing.names.length, 0);
+  eq('and writes nothing', Object.keys(nothing.updates).length, 0);
+
+  /* `name` and `at` from the lookup are never written as findings — they
+     are the entry's own, not something a search discovered. */
+  eq('a looked-up name does not overwrite the entry name',
+    w.updates['a/name'], 'Thin One');
+
+  eq('an entry with no name at all is not writable',
+    L.libraryFillWrite([{ k: 'e', got: { proof: 90 } }], { e: true }, {}, 1)
+      .names.length, 0);
+  eq('nothing found writes nothing',
+    Object.keys(L.libraryFillWrite([], {}, {}, 1).updates).length, 0);
+  eq('a missing list is not an error',
+    L.libraryFillWrite(null, null, null, 1).names.length, 0);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
