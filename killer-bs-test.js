@@ -4120,7 +4120,15 @@ sec('§181 the App use tab names controls that exist');
     ['Read it',               'Looking at it on a website'],
     ['I poured this',         'Record a pour'],
     ['Remix',                 'Run a flight again'],
-    ['Build a flight',        'Flights']
+    ['Build a flight',        'Flights'],
+    /* The bottle screen, added 2026-09-03 when nine controls in one row
+       were moved into the section each belongs to. The help now describes
+       that layout, so the labels it names have to keep existing — this is
+       the same check that caught "Correct these details" and "Change". */
+    ['Find it',               'Poured, Find it, Another bottle'],
+    ['+ Another bottle',      'Poured, Find it, Another bottle'],
+    ['Edit',                  'Look up, Edit, Delete'],
+    ['Delete',                'Look up, Edit, Delete']
   ];
   // A label is either a quoted string the script sets, or text between
   // tags in the markup. Both are the words printed on the control.
