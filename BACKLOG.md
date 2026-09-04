@@ -35,9 +35,10 @@ reviewed shows once, earliest offer winning. `contrib/$uid/upc` is bounded
 to the same shape as the shared node, so nothing can be offered that could
 not then be accepted.
 
-Rules pasted 2026-09-04. `firebase-rules.json` does not deploy with the
-app, so a paste is needed ONLY when that file changes — say so then, and
-not on every delivery.
+Rules pasted 2026-09-04, and again at v1.6.36 (md5 20792bc8) for admin
+delete-only writes and the `wiped` tombstone. `firebase-rules.json` does
+not deploy with the app, so a paste is needed ONLY when that file changes —
+say so then, and not on every delivery.
 
 **Nothing else is unbounded.** Checked the whole file on 2026-09-03:
 directory, requests, shares, sharedWith, shared, view, admins, stats and
