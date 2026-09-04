@@ -2919,7 +2919,11 @@ eq('common noun', L.titleCase('bourbon'), 'Bourbon');
 eq('two words', L.titleCase('drain pour'), 'Drain Pour');
 eq('acronym stays whole', L.titleCase('msrp'), 'MSRP');
 eq('long name is shortened for a chip', L.titleCase('american single malt'), 'American Malt');
-eq('house spelling applied', L.titleCase('flavored'), 'Flavoured');
+/* US spelling. The app is American, the shelf is mostly American whiskey,
+   and BZ writes US spelling everywhere else; Flavoured was the one British
+   word in the interface and it sat on a chip beside Bourbon and Rye. */
+eq('US spelling, like the rest of the app',
+  L.titleCase('flavored'), 'Flavored');
 eq('proper noun', L.titleCase('islay'), 'Islay');
 eq('cask name', L.titleCase('pedro ximenez'), 'Pedro Ximenez');
 eq('interior capital survives', L.titleCase("A'Bunadh"), "A'Bunadh");
@@ -7471,9 +7475,17 @@ sec('§233 six axes, no total');
      point and get a list and then shop for that bottle." The list behind an
      axis and the roadmap sentence say the same thing about the same gap,
      from one function, so they cannot drift (rule 30a). */
+  /* Names what the number counts. "You have 1" under a title reading
+     Campbeltown single malt Scotch left the number without a noun. */
   eq('a started gap credits what you already hold',
     L.axisGapLine({ name: 'Campbeltown', n: 1, short: 2 }),
+    'You have 1 Campbeltown \u2014 2 more make it a comparison.');
+  eq('and without a name it still reads',
+    L.axisGapLine({ n: 1, short: 2 }),
     'You have 1 \u2014 2 more make it a comparison.');
+  eq('an unowned gap names the thing too',
+    L.axisGapLine({ name: 'Lowland', n: 0, short: 3 }),
+    'Nothing from Lowland on the shelf yet.');
   eq('one short agrees with its verb',
     /1 more makes it/.test(L.axisGapLine({ n: 2, short: 1 })), true);
   eq('something you own none of says so plainly',
