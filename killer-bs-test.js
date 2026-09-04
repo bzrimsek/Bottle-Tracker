@@ -8485,5 +8485,182 @@ sec('§246 a repeat buy always has somewhere to go');
     single.some(a => a.src === 'repeat'), false);
 }
 
+/* §247  what may reach the shared library ----------------------------
+ *
+ * BZ pasted a bundle listing and "You Save" came back as a bottle. The
+ * parse was the small half. The large half: every lookup silently offers
+ * its answer to the SHARED library, and a model asked "what whisky is You
+ * Save" will often invent a proof and a distillery rather than say it does
+ * not know. That invention cleared worthContributing and would have been
+ * published — permanently, for everybody.
+ *
+ * A name good enough to SEARCH is not a name good enough to PUBLISH. The
+ * bar to ask a question and the bar to write to a shared, permanent list
+ * are different bars.
+ */
+sec('§247 the bar to publish is higher than the bar to ask');
+{
+  const full = (name, extra) => Object.assign(
+    { name: name, proof: 100, dist: 'Some House', sub: 'bourbon' },
+    extra || {});
+
+  /* Marketing copy, however confidently something answered about it. */
+  ['You Save', 'You Pay $35', 'Free Shipping', 'Add to cart', 'Sold out',
+   'View more', 'Buy now', 'Unsubscribe', 'Limited', 'Bundle'
+  ].forEach(junk => {
+    eq('never published: ' + junk, L.worthContributing(full(junk), {}), false);
+  });
+
+  /* A description is not a name. Once the generic whisky words come out,
+     a real bottle still has something left and this does not. */
+  eq('a category description is not a bottle',
+    L.worthContributing(full('Straight Kentucky Bourbon Whiskey'), {}), false);
+  eq('nor is a bare style',
+    L.worthContributing(full('Single Malt Scotch Whisky'), {}), false);
+
+  /* And the things that ARE bottles still go through, including the
+     awkward ones: a number for a name, and a two-word name that norms
+     down to almost nothing. */
+  eq('a real name is published',
+    L.worthContributing(full('Ardbeg Corryvreckan'), {}), true);
+  eq('a name that starts with a number is a name',
+    L.worthContributing(full('1792 Small Batch'), {}), true);
+  eq('and a short real one',
+    L.worthContributing(full('Blue Spot'), {}), true);
+
+  /* The existing bar still applies: no proof, no publish. */
+  eq('no proof is still no publish',
+    L.worthContributing({ name: 'Ardbeg Ten', dist: 'Ardbeg' }, {}), false);
+  eq('and a bottle already in the library is not published twice',
+    L.worthContributing(full('Ardbeg Corryvreckan'),
+      { x: { name: 'Ardbeg Corryvreckan' } }), false);
+}
+
+/* §248  covered is not the same as spread ----------------------------
+ *
+ * BZ: "should we not keep anyone from a perfect 100%, there are so many
+ * bottles." Wood, Strength and Smoke have four to six buckets and covered
+ * means three bottles, so twelve bottles maxed Smoke on a shelf of 326 —
+ * and an axis reading 100% stops informing and stops motivating.
+ *
+ * It was also untrue. His smoke buckets are 271 unpeated, 4 a whisper, 19
+ * definite and 31 heavy: every level present, and calling that perfect is
+ * wrong. No artificial cap was added — a ceiling with a joke attached
+ * would undermine the one discipline this app keeps, which is that every
+ * number means something. The honest measure makes 100% unreachable by
+ * itself, because it now needs equal shares as well as full coverage.
+ */
+sec('§248 an axis is covered and spread, not just covered');
+{
+  const mk = rows => {
+    const cat = {}, bs = [];
+    rows.forEach(([n, sub], i) => {
+      for (let j = 0; j < n; j++) {
+        const k = 's' + i + 'b' + j;
+        cat[k] = { k: k, name: k, sub: sub, dist: 'H' + i + j, proof: 100 };
+        bs.push({ k: k, status: 'open' });
+      }
+    });
+    return { cat: cat, bs: bs };
+  };
+  const breadth = s => L.shelfAxes(s.cat, s.bs)
+    .filter(a => a.id === 'breadth')[0];
+
+  /* Two categories, evenly held: full marks for what is present. */
+  const even = breadth(mk([[5, 'bourbon'], [5, 'rye']]));
+  eq('two categories held evenly are 100% spread', even.even, 100);
+  eq('and the score is the coverage', even.pct, even.coverPct);
+
+  /* The same two, wildly lopsided: same coverage, lower score. */
+  const skew = breadth(mk([[60, 'bourbon'], [3, 'rye']]));
+  eq('the same coverage, held lopsidedly', skew.coverPct, even.coverPct);
+  eq('scores lower', skew.pct < even.pct, true);
+  eq('because the spread is worse', skew.even < even.even, true);
+
+  /* An absent bucket is counted by coverage and must not be counted
+     again here: three bourbons and nothing else is 11% covered, and with
+     one category present there is nothing yet to be uneven about. */
+  const one = breadth(mk([[3, 'bourbon']]));
+  eq('one category present is not called uneven', one.even, 100);
+  eq('and coverage still reads honestly', one.pct, 11);
+
+  /* The point of the change: full coverage alone no longer reads 100. */
+  const ALL = L.CORE_STYLES;
+  const lop = breadth(mk(ALL.map((sub, i) => [i ? 3 : 200, sub])));
+  eq('every category covered', lop.coverPct, 100);
+  eq('but one of them holding nearly everything is not perfect',
+    lop.pct < 100, true);
+  /* And a genuinely balanced shelf still can reach it, so the ceiling is
+     earned rather than withheld. */
+  const flat = breadth(mk(ALL.map(sub => [5, sub])));
+  eq('a shelf that is genuinely even reaches 100', flat.pct, 100);
+}
+
+/* §249  the whisky world, not the Scotch regions --------------------
+ *
+ * The axis measured Scotch regions, which is 80 of BZ's 325 bottles: three
+ * quarters of the shelf contributed nothing to it.
+ *
+ * The obvious fix looked like a duplicate of Breadth, because on that
+ * shelf country and category are nearly the same — United States is
+ * bourbon plus rye plus Tennessee, Scotland is scotch, Ireland is irish.
+ * BZ said why that was wrong: "there is literally a world of whiskey — I
+ * have India and New Zealand." Breadth collapses all of those into ONE
+ * bucket called `world`, and only this axis can tell six countries apart.
+ */
+sec('§249 a world of whisky, told apart');
+{
+  const mk = rows => {
+    const cat = {}, bs = [];
+    rows.forEach(([n, sub, dist], i) => {
+      for (let j = 0; j < n; j++) {
+        const k = 'w' + i + 'b' + j;
+        cat[k] = { k: k, name: k, sub: sub, dist: dist || ('H' + i),
+                   proof: 100 };
+        bs.push({ k: k, status: 'open' });
+      }
+    });
+    return { cat: cat, bs: bs };
+  };
+  const world = (s, geo) => L.shelfAxes(s.cat, s.bs, geo)
+    .filter(a => a.id === 'origin')[0];
+
+  /* The whole point: two bottles that Breadth calls one category, and the
+     world axis calls two countries. */
+  const geo = { subCountry: L.SUB_COUNTRY,
+                worldDist: { 'Rampur Distillery': 'India',
+                             'Pokeno Whiskey': 'New Zealand' } };
+  const two = mk([[1, 'world', 'Rampur Distillery'],
+                  [1, 'world', 'Pokeno Whiskey']]);
+  const wa = world(two, geo);
+  eq('two world whiskies are two countries', wa.have, 2);
+  const br = L.shelfAxes(two.cat, two.bs, geo)
+    .filter(a => a.id === 'breadth')[0];
+  eq('and Breadth cannot tell them apart', br.have, 0);
+
+  /* ONE bottle covers a country. Three is right for a cask and wrong for
+     Taiwan: a single Kavalan is the whole point of owning a Kavalan. */
+  const solo = world(mk([[1, 'japanese']]), geo);
+  eq('one bottle covers a country', solo.have, 1);
+
+  /* Tequila is on the map as Mexico and is not a whisky country. */
+  const teq = world(mk([[3, 'tequila']]), geo);
+  eq('a tequila does not cover a whisky country', teq.have, 0);
+
+  /* The gaps are places somebody could actually go and buy from. */
+  const some = world(mk([[3, 'bourbon'], [3, 'scotch']]), geo);
+  eq('the countries not held are named',
+    some.missing.indexOf('Taiwan') >= 0, true);
+  eq('and every one of them is one bottle away',
+    some.gaps.every(g => g.short === 1), true);
+
+  /* Without the map loaded the category mapping still places most of a
+     shelf, which is how the harness reaches this at all. */
+  const nomap = L.shelfAxes(mk([[3, 'bourbon'], [3, 'irish']]).cat,
+    mk([[3, 'bourbon'], [3, 'irish']]).bs)
+    .filter(a => a.id === 'origin')[0];
+  eq('the built-in mapping works without map.json', nomap.have, 2);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
