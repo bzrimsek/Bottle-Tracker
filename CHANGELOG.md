@@ -2,6 +2,10 @@
 
 Newest first. The file header in index.html carries the headlines; the full entries live here.
 
+## v1.6.38  ·  2026-09-04 12:01 PM ET
+
+The admin list shows everybody, not only the findable. BZ opened it and was told nobody else had an account, having seen one in the Firebase console the day before. It read the DIRECTORY, which holds only people who turned findable on - a sharing preference, not an account fact. It reads stats now, which every account writes on every sync and which an admin may read at the collection level, and that is the actual list. Each account is a line: name, how big the shelf is, how many pours and flights, when it was last seen, the five biggest categories on the shelf with a count each, the app version and whether they are findable. Ordered by last seen, because the question is who is still here and who is not, and an empty shelf nobody has been back to says empty shelf and 7 days ago, which is what a test account somebody made and forgot looks like. The shape of a shelf is published; the shelf is not, and that line is held by the rules rather than by this screen being polite about it. 24 new assertions, 2246 total.
+
 ## v1.6.37  ·  2026-09-04 11:39 AM ET
 
 Removing an account moved to Settings under Advanced, and admin became an umbrella. The control was on Buddies because that is where the list of people happens to live, which was the wrong reading: removing somebody is not something you do to a tasting buddy. It sits at the foot of Settings now, under a heading that says what kind of thing it is, and the people list loads when it is opened rather than on every visit to Settings. Whether you are an admin is a fact about the account, not about where you have been. It was set only by rendering the Library screen, so Settings could not show Advanced and the library's own publish buttons stayed hidden until you had happened to open the Library first - which is why the new feature could not be found. It is established once at sign-in now, and any screen already drawn before the answer arrives is redrawn, because what those screens show depends on it. 2222 assertions.

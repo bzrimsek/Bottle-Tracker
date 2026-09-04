@@ -8080,5 +8080,88 @@ sec('§241 the tombstone a removal leaves');
     L.accountPaths('me', [], []).indexOf('wiped/me'), -1);
 }
 
+/* §242  who is using this ---------------------------------------------
+ *
+ * BZ opened the admin list and was told nobody else had an account, having
+ * seen one in the Firebase console the day before. The list was read from
+ * the DIRECTORY, which holds only people who turned findable on — a
+ * sharing preference, not an account fact. `stats` is written by every
+ * account on every sync and is readable at the collection level by an
+ * admin, which is the actual list.
+ *
+ * Ordered by last seen, because the question is who is still here and who
+ * is not, and a test account somebody made once is the likeliest thing to
+ * want removing.
+ */
+sec('§242 the people an admin can see');
+{
+  const DAY = 86400000;
+  const now = 10 * DAY;
+  const stats = {
+    u1: { name: 'Old Stats Name', at: 10 * DAY, version: '1.6', bottles: 40,
+          open: 38, pours: 12, flights: 2, findable: true,
+          types: { Bourbon: 20, Scotch: 12, Rye: 8 } },
+    u2: { name: '', at: 3 * DAY, version: '1.5', bottles: 0, pours: 0,
+          flights: 0, findable: false },
+    u3: { name: 'Quiet One', at: 9 * DAY, version: '1.6', bottles: 5,
+          pours: 1, flights: 0 }
+  };
+  // Only u1 chose to be findable, so only u1 is in the directory.
+  const dir = [{ uid: 'u1', name: 'Chosen Name' }];
+
+  const people = L.adminPeople(stats, dir, now);
+  eq('everybody with an account is listed, not just the findable ones',
+    people.length, 3);
+  eq('including somebody who was never findable',
+    people.some(p => p.uid === 'u2'), true);
+
+  /* Most recently seen first. */
+  eq('the most recent leads', people[0].uid, 'u1');
+  eq('then the next', people[1].uid, 'u3');
+  eq('and the stalest last', people[2].uid, 'u2');
+
+  /* The name they chose to show others wins over the stats copy. */
+  eq('the directory name wins', people[0].name, 'Chosen Name');
+  eq('and stats fills in for somebody not findable',
+    people.filter(p => p.uid === 'u3')[0].name, 'Quiet One');
+  eq('somebody with no name at all is not a crash',
+    people.filter(p => p.uid === 'u2')[0].name, '');
+
+  eq('days since is counted', people[0].daysSince, 0);
+  eq('and for the stale one', people[2].daysSince, 7);
+
+  /* The shape of the shelf, biggest first, without any bottle in it. */
+  eq('types come back biggest first', people[0].types[0].type, 'Bourbon');
+  eq('with their counts', people[0].types[0].n, 20);
+  eq('an account with no types is not a crash',
+    people.filter(p => p.uid === 'u2')[0].types.length, 0);
+
+  /* The one line that says what an account IS. An empty shelf nobody has
+     been back to is a test account somebody made and forgot. */
+  eq('an empty shelf says so',
+    /empty shelf/.test(L.adminPersonLine(people[2])), true);
+  eq('and how long ago it was here',
+    /7 days ago/.test(L.adminPersonLine(people[2])), true);
+  eq('a real shelf is counted',
+    /40 bottles/.test(L.adminPersonLine(people[0])), true);
+  eq('with its pours', /12 pours/.test(L.adminPersonLine(people[0])), true);
+  eq('and its flights',
+    /2 flights run/.test(L.adminPersonLine(people[0])), true);
+  eq('today is said as today',
+    /here today/.test(L.adminPersonLine(people[0])), true);
+  eq('one day is yesterday',
+    /yesterday/.test(L.adminPersonLine({ bottles: 1, daysSince: 1 })), true);
+  eq('and one bottle is singular',
+    /1 bottle \u00b7/.test(L.adminPersonLine({ bottles: 1, daysSince: 1 })),
+    true);
+  eq('an account that never synced says that',
+    /never synced/.test(L.adminPersonLine({ bottles: 0, daysSince: null })),
+    true);
+
+  eq('no stats is nobody', L.adminPeople({}, [], now).length, 0);
+  eq('and missing stats is not an error',
+    L.adminPeople(null, null, now).length, 0);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
