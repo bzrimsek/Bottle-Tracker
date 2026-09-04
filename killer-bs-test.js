@@ -6611,7 +6611,7 @@ sec('\u00a7224 what goes on the wishlist, and why');
     L.wishEntry('anything', null, null, null, catalog, bottles).forFlight, null);
 }
 
-/* §223  the arithmetic that was hiding inside renderShelf --------------
+/* §226  the arithmetic that was hiding inside renderShelf --------------
  *
  * Rule 30, and the reason it is a rule. A ReferenceError lived in
  * renderShop for fourteen versions with 1,794 assertions passing over it:
@@ -6622,7 +6622,7 @@ sec('\u00a7224 what goes on the wishlist, and why');
  * Every expected value below was worked out by hand before the assertion
  * was written (rule 28), not read off the function it is checking.
  */
-sec('§223 the shelf tiles, the money column and the count');
+sec('§226 the shelf tiles, the money column and the count');
 {
   /* Four products, three of them owned. d is in the catalogue and owned by
      nobody here, which is the case that made the tiles disagree with the
@@ -6723,14 +6723,14 @@ sec('§223 the shelf tiles, the money column and the count');
   eq('a missing list is not an error either', L.wishRows(null).length, 0);
 }
 
-/* §224  the arithmetic that was hiding inside renderShop ---------------
+/* §227  the arithmetic that was hiding inside renderShop ---------------
  *
  * This is the function the `cand` ReferenceError lived in, undetected
  * through fourteen versions, because nothing inside a render function is
  * reachable from here. Three of the five below have already caused a bug
  * of their own, and each of those bugs is a case in this section.
  */
-sec('§224 shop fields, seeds and what a lookup may overwrite');
+sec('§227 shop fields, seeds and what a lookup may overwrite');
 {
   /* Field precedence: yours, then the seed, then nothing. */
   const shop = { proof: 100, dist: '' };
@@ -6813,6 +6813,231 @@ sec('§224 shop fields, seeds and what a lookup may overwrite');
   eq('nothing back says nothing', L.lookupNote(null, {}), '');
   eq('a missing library is not an error',
     L.lookupNote({ source: 'shelf', k: 'x' }, null), 'Already on your shelf.');
+}
+
+/* §228  what you are likely to like -----------------------------------
+ *
+ * BZ: "there are so many bottles out there and I only get a few ideas, and
+ * those are kinda obvious." He was right, and the reason was structural:
+ * every source was ABSENCE-driven, so the findings were bounded by the
+ * number of holes and a hole is by definition the obvious thing to say.
+ * These sources read what the shelf reveals you LIKE and ask for the thing
+ * next to it.
+ *
+ * Expected values worked out by hand first (rule 28).
+ */
+sec('§228 wood families, taste profile and the likely-to-like list');
+{
+  /* The wood taxonomy. A finish compounds with a plus, and counting the raw
+     string fragmented the loudest signal on BZ's shelf into five thin ones:
+     Sherry 30, Pedro Ximenez 19, Oloroso 14, Manzanilla 1, Cream Sherry 1. */
+  eq('a compound finish splits', L.finishParts('Pedro Ximenez+Port').length, 2);
+  eq('and keeps its parts whole',
+    L.finishParts('Pedro Ximenez+Port')[0], 'Pedro Ximenez');
+  eq('whitespace around a part is trimmed',
+    L.finishParts('Oloroso + French Oak')[1], 'French Oak');
+  eq('no finish is no parts', L.finishParts(null).length, 0);
+  eq('an empty finish is no parts', L.finishParts('').length, 0);
+
+  eq('oloroso is sherry', L.woodFamily('Oloroso'), 'sherry');
+  eq('PX is sherry', L.woodFamily('Pedro Ximenez'), 'sherry');
+  eq('manzanilla is sherry too', L.woodFamily('Manzanilla'), 'sherry');
+  eq('port is fortified, not sherry', L.woodFamily('Port'), 'fortified');
+  eq('bordeaux is table wine', L.woodFamily('Bordeaux'), 'table');
+  eq('cognac is brandy', L.woodFamily('Cognac'), 'brandy');
+  eq('rum is a spirit cask', L.woodFamily('Rum'), 'spirit');
+  eq('mizunara is oak', L.woodFamily('Mizunara'), 'oak');
+  eq('case does not matter', L.woodFamily('oLOROSO'), 'sherry');
+  /* An unknown wood returns null rather than being swept into a family it
+     might not belong to. A wrong family is worse than none: the whole point
+     is that sherry is not one thing. */
+  eq('an unknown wood is not guessed at', L.woodFamily('Tuesday'), null);
+  eq('no wood is no family', L.woodFamily(''), null);
+
+  eq('port is a wine cask', L.isWineWood('Port'), true);
+  eq('oloroso is a wine cask', L.isWineWood('Oloroso'), true);
+  eq('rum is not a wine cask', L.isWineWood('Rum'), false);
+  eq('american oak is not a wine cask', L.isWineWood('American Oak'), false);
+
+  const both = L.woodsOf({ fin: 'Pedro Ximenez+Port' });
+  eq('a double finish carries two woods', both.woods.length, 2);
+  eq('and touches two families', both.families.length, 2);
+  eq('sorted, so the order cannot drift', both.families[0], 'fortified');
+  eq('and the second', both.families[1], 'sherry');
+  eq('a bottle with no finish touches none', L.woodsOf({}).families.length, 0);
+
+  /* Articles. The reasons are assembled from parts, which is how "A
+     Amontillado cask" reached the screen. */
+  eq('a vowel takes an', L.article('Amontillado'), 'an');
+  eq('oloroso takes an', L.article('Oloroso'), 'an');
+  eq('a consonant takes a', L.article('Port'), 'a');
+  eq('eight sounds like a vowel', L.article('8 year'), 'an');
+  eq('one does not', L.article('one-off'), 'a');
+  eq('nothing still returns an article', L.article(''), 'a');
+
+  /* The taste profile. Bought-again is the strongest signal on a shelf and
+     nothing read it: a second bottle is a decision made twice. */
+  const catalog = {
+    a: { k: 'a', name: 'Ardbeg 10', dist: 'Ardbeg', sub: 'scotch',
+         region: 'Islay', proof: 92 },
+    b: { k: 'b', name: 'Ardbeg Uigeadail', dist: 'Ardbeg', sub: 'scotch',
+         region: 'Islay', proof: 108.4, fin: 'Oloroso' },
+    c: { k: 'c', name: 'Aberlour A\u2019Bunadh', dist: 'Aberlour',
+         sub: 'scotch', region: 'Speyside', proof: 120, fin: 'Oloroso' },
+    d: { k: 'd', name: 'Never Bought', dist: 'Nobody', sub: 'bourbon',
+         proof: 90 }
+  };
+  /* a twice, b once, c once, d never. */
+  const bottles = [
+    { k: 'a', status: 'open' }, { k: 'a', status: 'sealed' },
+    { k: 'b', status: 'open' }, { k: 'c', status: 'open' }
+  ];
+
+  const t = L.tasteProfile(catalog, bottles, []);
+  eq('three products owned, not four', t.owned, 3);
+  eq('one whisky bought twice', t.repeats.length, 1);
+  eq('and it is the one bought twice', t.repeats[0].k, 'a');
+  eq('counted by bottles', t.repeats[0].n, 2);
+  /* Houses weight by BOTTLES: Ardbeg has 3 (two of a, one of b), Aberlour 1. */
+  eq('the house you own most of leads', t.houses[0].value, 'Ardbeg');
+  eq('counted by bottles, not products', t.houses[0].n, 3);
+  /* Oloroso appears on b and c: two products, two houses. */
+  eq('oloroso is counted once per product', t.finishes[0].value, 'Oloroso');
+  eq('across two products', t.finishes[0].n, 2);
+  eq('and two houses', t.finishes[0].houses.length, 2);
+  eq('the sherry family is counted', t.woodFamilies[0].value, 'sherry');
+  eq('with both of them in it', t.woodFamilies[0].n, 2);
+  eq('a product nobody owns is not in the profile',
+    t.houses.some(h => h.value === 'Nobody'), false);
+
+  const empty = L.tasteProfile({}, [], []);
+  eq('an empty shelf profiles to nothing', empty.owned, 0);
+  eq('and has no repeats', empty.repeats.length, 0);
+
+  /* The list itself. */
+  eq('an empty shelf recommends nothing',
+    L.likelyToLike({}, [], [], 10).length, 0);
+
+  const list = L.likelyToLike(catalog, bottles, [], 10);
+  eq('a real shelf produces findings', list.length > 0, true);
+  eq('every finding carries a reason',
+    list.every(g => typeof g.why === 'string' && g.why.length > 10), true);
+  eq('every finding carries a search to run',
+    list.every(g => typeof g.ask === 'string' && g.ask.length > 2), true);
+  eq('every finding is marked affinity, not absence',
+    list.every(g => g.kind === 'affinity'), true);
+  eq('no two findings say the same thing',
+    new Set(list.map(g => L.shopNorm(g.name))).size, list.length);
+  eq('the limit is honoured',
+    L.likelyToLike(catalog, bottles, [], 2).length, 2);
+
+  /* Interleaving. Straight weight order put "An aged X" three times at the
+     head of BZ's real list, and three ideas of the same shape read as one
+     idea, which is the complaint this exists to answer. */
+  const distinct = new Set(list.map(g => g.src)).size;
+  const firstRound = list.slice(0, distinct).map(g => g.src);
+  eq('every source is heard from before any source speaks twice',
+    new Set(firstRound).size, distinct);
+
+  /* Rotation: the order is stable, the window moves. */
+  const five = ['a', 'b', 'c', 'd', 'e'];
+  eq('the first press takes the top', L.rotate(five, 2, 0).join(''), 'ab');
+  eq('the second press moves along', L.rotate(five, 2, 1).join(''), 'cd');
+  eq('and it wraps rather than running out',
+    L.rotate(five, 2, 2).join(''), 'ea');
+  eq('asking for more than there is gives what there is',
+    L.rotate(['x'], 5, 0).length, 1);
+  eq('an empty list rotates to nothing', L.rotate([], 3, 0).length, 0);
+  eq('a missing list is not an error', L.rotate(null, 3, 0).length, 0);
+}
+
+/* §229  a shelf of books ---------------------------------------------
+ *
+ * BZ: "could we make the shelf tiles look more like books on a shelf than
+ * a bunch of buttons?" The geometry is arithmetic, so it lives in
+ * L.shelfTypeTiles where it can be checked, not in the render (rule 30).
+ *
+ * Expected values worked out by hand first (rule 28):
+ *   counts 40,30,20,10,4 against a top of 40
+ *   shares 1.0, .75, .50, .25, .10  ->  bands 4,3,2,1,0
+ *   heights 96+band*13 = 148,135,122,109,96
+ *   widths  32+band*6  =  56, 50, 44, 38,32
+ */
+sec('§229 books on a shelf');
+{
+  /* Two bourbons, one scotch, one single malt: bourbon is the only type
+     with more than one product, so it is the fattest book. */
+  const cat = {
+    a: { sub: 'bourbon' }, b: { sub: 'bourbon' }, c: { sub: 'scotch' },
+    d: { sub: 'american single malt' }
+  };
+  const counts = { a: 1, b: 1, c: 1, d: 1 };
+  const t = L.shelfTypeTiles(cat, counts);
+  eq('bourbon is the fattest book', t.tiles[0].sub, 'bourbon');
+  eq('and stands tallest', t.tiles[0].height > t.tiles[1].height, true);
+  eq('and is the thickest', t.tiles[0].width > t.tiles[1].width, true);
+
+  /* Height reads the COUNT and nothing else. Growing a book to fit its
+     name made American Single Malt the tallest on the shelf with ten
+     bottles against Bourbon's 129 — the one thing the picture must not
+     say. */
+  const wideCat = {}, wideHeld = {};
+  [['bourbon', 129], ['american single malt', 10]].forEach(([sub, k]) => {
+    for (let i = 0; i < k; i++) {
+      const id = sub.replace(/ /g, '') + i;
+      wideCat[id] = { sub: sub };
+      wideHeld[id] = 1;
+    }
+  });
+  const wide = L.shelfTypeTiles(wideCat, wideHeld);
+  const bourbon = wide.tiles.filter(x => x.sub === 'bourbon')[0];
+  const asm = wide.tiles.filter(x => x.sub === 'american single malt')[0];
+  eq('a long name never out-grows a bigger count',
+    asm.height <= bourbon.height, true);
+  eq('it shrinks its type instead', asm.size <= bourbon.size, true);
+  eq('but never below the floor', asm.size >= 8.5, true);
+  eq('and never above the ceiling', bourbon.size <= 11, true);
+
+  /* The label is the full name. L.titleCase drops stop words, which is
+     right for a shelf label and printed "American Malt" on the spine. */
+  eq('the spine carries the whole name', asm.label, 'American Single Malt');
+  eq('capitalised', bourbon.label, 'Bourbon');
+
+  /* Banding, on the five counts worked out above. */
+  /* n counts owned PRODUCTS of a type, not bottles, so the fixture needs
+     that many products — my first version gave each type one product and
+     every book came out band four. */
+  const many = {}, held = {};
+  [['a', 40], ['b', 30], ['c', 20], ['d', 10], ['e', 4]].forEach(([sub, k]) => {
+    for (let i = 0; i < k; i++) {
+      const id = sub + i;
+      many[id] = { sub: sub };
+      held[id] = 1;
+    }
+  });
+  const five = L.shelfTypeTiles(many, held);
+  eq('five counts give five heights',
+    five.tiles.map(x => x.height).join(','), '148,135,122,109,96');
+  eq('and five thicknesses',
+    five.tiles.map(x => x.width).join(','), '56,50,44,38,32');
+  eq('the biggest is band four', five.tiles[0].band, 4);
+  eq('the smallest is band zero', five.tiles[4].band, 0);
+
+  /* Colour. A named type is stable; anything unanticipated still gets its
+     own spine rather than falling back to one shared cream. */
+  eq('bourbon has its own colour',
+    L.spineColour('bourbon'), L.SPINE_COLOURS.bourbon);
+  eq('case does not matter', L.spineColour('Bourbon'),
+    L.SPINE_COLOURS.bourbon);
+  eq('an unknown type still gets a colour',
+    /^hsl\(/.test(L.spineColour('quinoa whisky')), true);
+  eq('and the same one every time',
+    L.spineColour('quinoa whisky'), L.spineColour('quinoa whisky'));
+  eq('two different unknowns do not collide',
+    L.spineColour('quinoa whisky') === L.spineColour('sorghum whisky'), false);
+  eq('every book on a real shelf carries a colour',
+    five.tiles.every(x => typeof x.spine === 'string' && x.spine.length > 3),
+    true);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
