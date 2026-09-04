@@ -8425,5 +8425,65 @@ sec('§245 the actions a shelf earns');
   eq('and something to press', full.every(a => a.id && a.label), true);
 }
 
+/* §246  every repeat buy can produce an ask --------------------------
+ *
+ * Measured on BZ's shelf 2026-09-04, holding one bottle out and asking
+ * whether the engine names that house: 5 of 14 found, 0 of 14 for a
+ * control of whiskies bought once. Perfect precision, 36% recall.
+ *
+ * Both halves of the recall problem were here. Only the first six repeats
+ * were considered at all, and a house where every obvious move had already
+ * been made — owned at strength AND aged AND finished — produced nothing,
+ * which is exactly the deepest relationship on a shelf. After the fix,
+ * 9 of 14, and the two control hits were bottles from houses BZ does go
+ * back to, so naming them is right.
+ */
+sec('§246 a repeat buy always has somewhere to go');
+{
+  const cat = {}, bs = [];
+  const add = (k, name, dist, extra) => {
+    cat[k] = Object.assign({ k: k, name: name, dist: dist, sub: 'bourbon',
+      proof: 100 }, extra || {});
+    bs.push({ k: k, status: 'open' });
+  };
+  /* Ten houses, each bought twice, so the old slice of six would leave
+     four with nothing to say. */
+  for (let i = 0; i < 10; i++) {
+    add('r' + i, 'House ' + i + ' Flagship', 'House ' + i, { proof: 95 });
+    bs.push({ k: 'r' + i, status: 'open' });          // bought twice
+  }
+  const asks = L.likelyToLike(cat, bs, {}, 60) || [];
+  const named = h => asks.some(a =>
+    (a.name + ' ' + (a.why || '')).indexOf(h) >= 0);
+
+  eq('the tenth repeat is not silently dropped', named('House 9'), true);
+  eq('nor the seventh', named('House 6'), true);
+  eq('and the first is still there', named('House 0'), true);
+
+  /* A house where every obvious move has been made still has one. */
+  const done = {}, db = [];
+  done.a = { k: 'a', name: 'Deep One', dist: 'Deep House', sub: 'bourbon',
+             proof: 120, age: 12, fin: 'Sherry' };
+  db.push({ k: 'a', status: 'open' }, { k: 'a', status: 'open' });
+  done.b = { k: 'b', name: 'Deep Two', dist: 'Deep House', sub: 'bourbon',
+             proof: 118, age: 10, fin: 'Port' };
+  db.push({ k: 'b', status: 'open' });
+  const deep = L.likelyToLike(done, db, {}, 60) || [];
+  eq('a house you own at strength, aged and finished still gets an ask',
+    deep.some(a => /Deep House/.test(a.name + ' ' + (a.why || ''))), true);
+  eq('and it says why there is nothing else left',
+    deep.some(a => /only move left/.test(a.why || '')), true);
+
+  /* Precision is the half not to trade away: a house bought once is not
+     a house you go back to, and must not be named as one. */
+  const once = {}, ob = [];
+  once.x = { k: 'x', name: 'Once', dist: 'Once House', sub: 'bourbon',
+             proof: 90 };
+  ob.push({ k: 'x', status: 'open' });
+  const single = L.likelyToLike(once, ob, {}, 60) || [];
+  eq('a house bought once produces no repeat ask',
+    single.some(a => a.src === 'repeat'), false);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

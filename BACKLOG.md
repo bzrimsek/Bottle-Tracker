@@ -236,6 +236,428 @@ admin and what would appear here when there is work. v1.6.21 made the
 failing case say why in Diagnostics; the succeeding-but-idle case still
 says nothing.
 
+### Record what was actually poured, not what was designed
+BZ, 2026-09-04: "when we do a flight, we need to record which extension
+actually got poured and if we riff onto any others."
+
+`runFlightNow` logs the CORE pours and nothing else. A flight's `ext` list
+— the bench pours, the ringers — is designed and never recorded, so the log
+says a flight ran and cannot say whether the extension that made the point
+was opened. Anything poured on the night that was in no list at all is
+invisible.
+
+That matters more now than it did. Buy-against-drink, the collector line,
+the tonight ordering and `L.useCount` all read the log, and the log is
+currently a record of the DESIGN rather than the evening.
+
+What to build:
+- A run should end with the pours confirmed rather than assumed: the core
+  ticked by default, the extensions unticked, and a way to add a bottle
+  that was not in either list.
+- The record grows two fields — which extensions were poured, and which
+  riffs. Both optional, because every run already logged has neither and
+  must keep reading correctly.
+- Riffs are the interesting half. A bottle somebody reached for mid-flight
+  is a stronger signal than one the flight designed, and nothing in the app
+  can currently see it.
+
+Do NOT make this a form. The point of a flight is the evening; a run that
+demands six confirmations before it will record anything will be skipped,
+and a skipped log is worse than an imprecise one. Default to what was
+designed, make correcting it one tap.
+
+### Share what a flight tasted, and let it seed a wishlist
+BZ, same conversation: "if we are doing a flight with buddies, can we share
+the tastes with them after we are complete and have it seed their wish
+list, if they so choose and if they don't have the bottle?"
+
+The good idea underneath: a flight run with somebody is the moment their
+taste and yours are most comparable, because you drank the same things on
+the same night. That is the one moment the app currently does nothing with.
+
+What to build:
+- After a run, offer to send the pours to whoever was there. The sharing
+  pairs already exist (`shares` / `sharedWith`), so this is a message
+  between accounts rather than new plumbing.
+- On the receiving side it is an OFFER, never a write: they see what was
+  poured, what each bottle was, and choose which to add to their wishlist.
+- Filter to what they do not own. `L.ownedCounts` on their shelf answers
+  it, and a wishlist entry for a bottle already on the shelf is noise.
+- The wish entry should carry WHERE it came from — "poured at BZ's, 3
+  September" — because a wishlist of bare names is the thing `L.wishEntry`
+  was written to avoid.
+
+**The job it replaces, which is the whole point.** BZ, 2026-09-04: it
+"saves taking a photo of the bottle". That is what happens at a tasting
+now — somebody likes the fourth pour, photographs the label so they can
+find it later, and the photo sits in a camera roll with nothing attached to
+it. Everything needed is already in the app: what it was, its proof, its
+cask, and the note somebody wrote that night. Build for that and the
+feature explains itself.
+
+**Decided 2026-09-04.** The bottle facts travel, the tasting notes travel,
+and the receiver chooses what goes on their wishlist.
+
+What a note must NOT do is arrive as the reader's own. A note is the person
+who wrote it saying what they found, and it keeps their name on it — "BZ,
+3 September" beside the words. The receiver writes their own later, and if
+they buy the bottle they will; a note nobody wrote silently becoming theirs
+is how a shelf fills up with opinions no one holds. `tnSrc` already carries
+that distinction and should be used rather than a new one.
+
+**Also decided 2026-09-04, and this settles the shape of it.**
+
+- **Who was there is chosen when the flight is RUN.** The button that
+  records a run picks from your buddies first. That is the prerequisite
+  both of these items were waiting on, and it belongs there rather than in
+  a share step afterwards: at the end of an evening nobody is going to
+  reopen the app and reconstruct who came.
+- **Being there IS the consent.** No accept step on the receiving side for
+  the tasting itself. You poured it for them; they drank it.
+- **If they own the bottle, the pour is logged on their shelf.** They drank
+  it, so their log should say so — which also means buy-against-drink and
+  the collector line stay true for somebody who tastes mostly at other
+  people's houses.
+- **If they do not own it, it is offered to their wishlist**, their choice.
+- **If you were not there, it never happened for you.** No forwarding, no
+  audience beyond the room.
+
+**The consequence worth designing around before any of it is built.** A
+pour appearing on somebody else's shelf is the first time one account's
+action changes another account's data, and the rules deliberately forbid
+exactly that: `$uid` is writable only by its owner, and an admin may delete
+but never write. That is a good rule and this should not break it.
+
+So the host does not write to the guest. The host records the run under
+their OWN uid, naming who was there, and the guest's device reads it on
+next load and applies it — the same shape `sharedWith` already uses, where
+a share is written by the owner and read by the viewer. Consent is implied
+by attendance and the write still happens on the guest's own device with
+their own credentials. No rules change, no account writing into another,
+and a guest who never opens the app simply has nothing applied.
+
+That also answers the forwarding question for free: the record names who
+was there, so a device that is not on that list has nothing to read.
+
+Both of these want the same thing first: the run has to know who was there,
+which it currently does not.
+
+### Scan a barcode from the add-a-bottle form — DONE 2026-09-04
+Built as described. `scanBarcode` takes an optional callback now, so a
+caller can have the number instead of the default routing to Shop; the
+Shop header button passes none and behaves as before.
+
+One trap worth recording: `$('#scanBtn').onclick = scanBarcode` would have
+handed the Event in as the callback, and an Event is truthy and not
+callable. The handler is `() => scanBarcode()` and the check inside is
+`typeof onCode === 'function'` rather than truthiness.
+
+Checked by driving both paths: a known code fills the name, an unknown one
+is held and taught on save.
+
+Original entry follows.
+
+### Scan a barcode from the add-a-bottle form
+BZ, 2026-09-04: "when we add a bottle manually a barcode scan would be
+useful."
+
+`scanBarcode` exists and works on both engines since v1.6.44, but it is
+wired to exactly one button — `#scanBtn` in the Shop header. Somebody who
+went Shelf, Add bottle is typing a name that is printed on a barcode eight
+inches away, and the app can read it.
+
+Small, and mostly plumbing:
+- A scan control in `productForm`, next to the name field.
+- On a hit, `knownUpcs` may already name the bottle; if it does the form
+  fills and there is nothing to type. If it does not, the number is kept so
+  that adding the bottle TEACHES the pairing — which is the half that
+  compounds, because the next person to scan it gets the name.
+- The form is also where a bottle arrives with no pairing at all, so it is
+  the best place in the app to collect them.
+
+Worth doing before the group starts, not after: every scan somebody makes
+in the first month is a pairing the library keeps, and a form that cannot
+scan is a month of pairings not collected.
+
+### Is this offer actually a good price
+BZ, same conversation: "when looking at an offer a deal check based on
+offer price would also be cool."
+
+`L.offerNames` strips prices out and throws them away, and `L.offerFacts`
+never looks for one. The shelf can answer the question and does not get
+asked: `msrp` is on every catalogue product, `L.paidFor` knows what was
+actually paid for each bottle and averages it, and `L.priceBand` already
+sorts bottles into everyday, good, special and vault.
+
+**Two verdicts, never one.** BZ, 2026-09-04: "we would eval on shelf and
+on cost." Fit and price are independent questions and blending them into a
+single score destroys the only thing worth knowing — a bottle that suits
+the shelf at a poor price and a bottle that suits nothing at a bargain both
+come out middling, and they call for opposite actions.
+
+So two readings side by side, and the pair IS the recommendation:
+
+    fits the shelf + good price   buy it
+    fits the shelf + poor price   want it, wait — it comes round again
+    wrong for you  + good price   cheap is not a reason
+    wrong for you  + poor price   no
+
+The existing verdicts (for you / worth a look / unknown) are the fit axis
+and stay as they are. Price is a second, separate line. Where price cannot
+be judged — no figure in the paste, or a currency with no rate set — the
+fit verdict still stands alone rather than being dragged toward the middle
+by a missing number, which is what a blended score would do.
+
+**And scarcity, which is a third thing and not a third axis.** BZ,
+2026-09-04: "need to include a notion of that's allocated, buy it!"
+
+Allocation does not change whether a bottle is for you or whether the price
+is fair. It changes how long the question stays open. An allocated bottle
+at its normal price is a BUY NOW, because the alternative is not buying it
+cheaper next month, it is not seeing it again. The same bottle at a poor
+price is a real decision rather than an easy no — which is exactly the case
+a blended score would have flattened.
+
+The data is already there and nothing new needs collecting: `alloc` carries
+common, uncommon, rare and unicorn, and `scar` carries standard, batched,
+limited and exclusive. On BZ's shelf that is 58 rare, 8 unicorn, 46 limited
+and 8 exclusive — enough that the words mean something.
+
+    fits + fair price + allocated      buy it now, it will not wait
+    fits + fair price                  buy it
+    fits + poor price + allocated      your call, and it is a real one
+    fits + poor price                  want it, wait
+    wrong for you + allocated          still not a reason
+
+That last line matters most and is the one an app is tempted to get wrong.
+Scarcity is the strongest pressure in whisky buying and the easiest to
+exploit; a shelf that does not want a bottle does not want it because it is
+rare. The app should say so plainly rather than joining in.
+
+Honest about where it knows this from: the library, not the market. A
+bottle nobody has published as allocated will not be flagged, and the app
+should not infer scarcity from a price.
+
+**Where each signal belongs.** BZ, 2026-09-04: "the allocated idea is more
+in store, and price is in store and in email and in web page."
+
+That is the right cut, and it says something about the whole Shop tab
+rather than just this feature. All four situations are asking the same
+question — is this bottle for me — and each has been answering it in its
+own words. They should share one verdict vocabulary and weight it by where
+the person is standing:
+
+- **In a store, holding it.** Allocation matters most here and nowhere
+  else: you cannot come back, so scarcity is the difference between
+  deciding now and deciding never. Price matters too, and it is the one
+  place the answer has to be readable in the four seconds before somebody
+  behind you wants the aisle.
+- **An email or a drop list.** Price on every line, because a drop list is
+  mostly a price list. Allocation is usually why the email exists at all,
+  so flagging it says little that the sender has not already said louder.
+- **A web page.** Price, and here it is worth the most: a listing carries
+  one, the person has time to weigh it, and this is the surface where a
+  comparison against what they actually paid is most likely to change a
+  decision.
+- **Deciding what to buy next.** Neither. There is no bottle and no price
+  yet, which is why this screen is the recommender rather than a verdict.
+
+So: price on three of the four, allocation on one, fit on all of them. And
+the in-store answer is the one to design for brevity — the others are read
+sitting down.
+
+What to build:
+- Keep the price when parsing rather than discarding it, on both paths — a
+  drop list has one per line, a shop listing has one in the prose.
+- Judge it against what is knowable, in this order: what YOU paid for the
+  same bottle, then the library's `msrp`, then the band its peers sit in. A
+  verdict with a number behind it, in the shape everything else on that
+  screen uses.
+- Say which comparison was used. "Under the £52 you paid last time" and
+  "about what bottles like it cost" are different claims and should not
+  read the same.
+- Currency. The listing that started this was in pounds and the shelf is in
+  dollars, and USD/GBP is the pairing that will actually come up. BZ,
+  2026-09-04: a setting with a manual periodic lookup is fine. So: one rate,
+  typed in Settings, with the date it was set, and no network call — a
+  conversion the person entered is one they know the age of, which is
+  exactly what a silently-fetched rate is not.
+
+  What that buys, and what it obliges. It obliges the app to SHOW its
+  working: "£44.95 is about $57 at your rate of 1.27, set 4 September"
+  rather than "$57". A converted number that does not say it was converted
+  is a number somebody will quote back later as though the app knew it.
+  And a rate months old should say so rather than quietly still applying —
+  the same shape as the lookup ledger's ninety days, and for the same
+  reason.
+
+  Unset is not an error: say the price in the currency it came in, compare
+  nothing, and offer the setting. A comparison is worth having only when
+  both sides are real.
+
+What this must not become: a market-price feature. Only Drams does
+location-based pricing and users report it wrong often enough to inflate
+their collection value. The honest version answers a narrower question —
+is this a good price FOR YOU, given what you have paid — and says nothing
+when it cannot.
+
+### Does the recommender actually work — MEASURED 2026-09-04
+The open question since the engine was built: it was plausible and never
+checked. Checked now, against the strongest ground truth on the shelf —
+14 whiskies BZ bought more than once, a decision made twice.
+
+Method: hold ONE bottle out, so the shelf stands as it did the day before
+the second was bought, and ask whether the engine names that house. Not
+whether it names the bottle: the engine emits asks, not bottles. A first
+attempt dropped the whole product and was wrong — that erases the repeat
+itself, which is the thing under test.
+
+A loose matcher gave 14 of 14 and meant nothing: 11 of those matched on
+CATEGORY, and on a shelf that is 129 bourbons "the ask says bourbon and
+the bottle is a bourbon" is very nearly vacuous. Strictly — the ask has to
+name the house or the brand:
+
+    before   5 of 14 repeat buys, 0 of 14 bought-once control
+    after    9 of 14 repeat buys, 2 of 14 control
+
+**Precision was perfect and stayed perfect.** Both control hits are
+bottles from Spot Whiskey and Penelope, houses BZ DOES go back to, so
+naming them is correct — the control was the flawed measure, not the
+engine. It has never once pointed at a house somebody did not return to.
+
+**Recall was the problem, and it was two lines.** `t.repeats.slice(0, 6)`
+meant eight of fourteen houses could not produce an ask however strong the
+evidence. And a house where every obvious move had already been made —
+owned at strength AND aged AND finished — fell through all three branches
+and produced nothing, which is precisely the deepest relationship on a
+shelf. Buying a fourth is itself the pattern; there is a fourth branch now
+that says so.
+
+What this does NOT establish: that the asks are good, only that they point
+at the right houses. Whether "A stronger Rabbit Hole" leads to a bottle
+worth owning is a different question and needs the group.
+
+## Cross-connections, 2026-09-04
+
+Four things the app already holds that do not yet talk to each other. BZ
+took all of these and declined a fifth — a second identity read off the
+pour log, "you buy sherry and you drink Islay" — as too temporal. He is
+right: a shelf is cumulative and a pour log swings with the season, so a
+drinking identity would rename itself every few months and mean less each
+time. The buy-against-drink 2x2 already surfaces that gap without claiming
+it is who somebody is.
+
+### Nothing reads the tasting notes
+The largest unused asset in the app. 930 note fields on BZ's shelf, and the
+flavour vocabulary is sitting in them: spice 145, sweet 140, fruit 134,
+vanilla 118, caramel 111, honey 63, chocolate 50, smoke 50.
+
+Every recommendation reasons from STRUCTURE — house, wood, proof, region,
+age, mashbill. None reasons from FLAVOUR, which is the thing a person
+actually tastes and the axis they think in. "You have written caramel on
+111 bottles and this one is described the same way" is a different argument
+from "same distillery", and probably a better one.
+
+What it needs:
+- A flavour profile beside `L.tasteProfile`: which words recur, how often,
+  and on what. Stop words and structure words ("palate", "long", "medium")
+  are noise and have to come out; the list above is what survives that.
+- Care about where a note CAME FROM. `tnSrc` and `tnFrom` already
+  distinguish what somebody wrote from what a flight card prompted and what
+  a model produced. A profile built from model-written notes is a profile of
+  the model, and the app has been careful about this distinction everywhere
+  else.
+- The obvious use is matching a candidate's description against the
+  profile. The subtler one is the portrait: what a shelf IS structurally
+  versus what it TASTES like are two different sentences, and only one is
+  currently written.
+
+### Flights built around a flavour — "can you find the caramel?"
+BZ, 2026-09-04. The best idea of the session, and a better use of the notes
+than the recommender was.
+
+Every flight this app designs varies something STRUCTURAL: a wood, a proof,
+a region, an age, a mashbill. A flavour is a variable nobody has used, and
+it is the one a person tasting actually thinks in. Two shapes, both honest
+comparisons:
+
+- **Find it.** Every pour is described as carrying the note; everything
+  else — house, wood, category, strength — varies as widely as possible.
+  You learn what "caramel" means by hearing it in six different contexts,
+  which is how anybody learns a flavour word.
+- **Odd one out.** Three carry it, one does not, and the card does not say
+  which. Falsifiable in the room, which the structural flights are not.
+
+**BZ's shelf can build these today.** Pourable bottles whose notes carry
+the word, and how widely they range:
+
+    caramel    90 across 7 types, 48 houses
+    vanilla    93 across 8 types, 57 houses
+    honey      72 across 8 types, 43 houses
+    pepper     59 across 5 types, 36 houses
+    chocolate  38 across 5 types, 30 houses
+    salt       15 across 5 types, 11 houses
+    leather    14 across 3 types, 13 houses
+
+Caramel and vanilla are almost too easy — that much spread means the
+flavour is the only constant, which is exactly the right shape. Salt,
+leather and tobacco are the interesting ones: scarce enough that the flight
+is a hunt.
+
+**The catch, and why it makes the idea stronger rather than weaker.**
+Checked on 2026-09-04: of the notes on BZ's shelf, 113 are `tnSrc: model`,
+185 carry a `tnFrom` flight prompt, and 12 came from reviews. Almost none
+were written by him. So a flight asserting "these four all have caramel" is
+currently testing the MODEL'S vocabulary and not the whisky.
+
+Do not paper over that. Build it in:
+
+- The flight's premise is a CLAIM to be tested, not a fact to be taught.
+  "The library says all six of these carry caramel. Do you agree?" A flight
+  that can be wrong is a better flight, and this one can be.
+- Running it produces the person's OWN notes on those pours, which is the
+  only way the app ever gets real flavour data. The flavour flight is the
+  mechanism that converts model notes into human ones — it bootstraps the
+  thing the recommender would need.
+- Which means it should be built BEFORE the flavour profile in the
+  recommender, not after. A profile built on 113 model notes is a profile
+  of the model; a profile built on notes somebody wrote after tasting six
+  bottles side by side is the real thing.
+- Show provenance on the card. A pour whose note came from a model and one
+  a person wrote are different evidence, and `tnSrc` already knows.
+
+That ordering is the point: flavour flights first, flavour recommendations
+once there are enough human notes to stand on.
+
+### Flights and the shape chart do not know about each other
+A thin axis has a consequence that is not being surfaced: it means certain
+designed comparisons cannot be poured. "Origin is at 67%, which is why
+these three flights are unrunnable" turns a percentage into a reason, and
+`L.flightReady` already computes exactly what is missing.
+
+The reverse is worth more. A bottle that completes a designed flight beats
+one that fills an abstract axis, because the flight is a comparison
+somebody already decided they wanted. `gapsFromFlights` exists and was
+deliberately demoted when affinity took the lead; now that the recommender
+argues from taste, "and it completes ONE STILL FOUR RECIPES" is a second
+reason to hang on an affinity finding rather than a competing source.
+
+### Two shelves, side by side
+The sharing feature that has not been built. `L.shelfAxes` run twice
+answers a question neither shelf answers alone: what can I taste at their
+house that I cannot at mine. That is the reason to open the app while
+standing in somebody's kitchen, and it needs no new data.
+
+It also gives the flights somewhere to go: a flight neither of you can run
+alone but both of you can run together is the strongest argument for
+sharing a shelf that this app could make.
+
+### The map is disconnected from Origin
+The Origin axis counts Scotch regions only. The map knows countries, and
+`L.countryCounts` already computes them. World coverage is an axis the data
+supports and nothing scores, and the map is currently a picture rather than
+a measure — tapping a country says what is there, and never what is not.
+
 ## Not looked at
 
 The visual pass covered contrast, the liquid band, one dark surface per
