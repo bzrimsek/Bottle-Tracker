@@ -7276,6 +7276,31 @@ sec('§232 the portrait a shelf earns');
   eq('a double finish still counts as PX',
     L.shelfPortrait(comp.cat, comp.bs, {}).title, 'PX Lover');
 
+  /* The prose above the bullets: the title argued rather than the evidence
+     listed. BZ asked for it to back the title up, and it does that from
+     the same numbers — no sentence in here is an opinion with nothing
+     behind it. */
+  eq('a real shelf gets a story', pxP.story.length > 40, true);
+  eq('and it opens by saying what the shelf IS',
+    /^This is /.test(pxP.story), true);
+  eq('it does not repeat the caption printed directly above it',
+    pxP.story.indexOf(pxP.why) >= 0, false);
+  eq('a shelf that earned nothing is called broad, not impressive',
+    /broad shelf/.test(plain.story), true);
+  /* The real rule is not brevity, it is evidence: a shelf that earned no
+     title claims none, and every sentence after the opener carries a
+     figure. "6 bottles from House" is earned and belongs. */
+  eq('a shelf with no title claims none',
+    /answer to/.test(plain.story), false);
+  eq('and every sentence after the first carries a number',
+    plain.story.split('. ').slice(1)
+      .filter(x => x.trim()).every(x => /\d/.test(x)), true);
+  /* Three runners-up are a list, not a chant. */
+  eq('the other titles are read as a list',
+    /, /.test(pxP.story) || pxP.also.length < 2, true);
+  eq('an empty shelf has no story to tell',
+    L.shelfStory(null, { owned: 0 }, {}), '');
+
   /* Every line of the story carries a figure. A sentence about somebody's
      own shelf with no number in it is an opinion. */
   eq('every line of the story has a number in it',
