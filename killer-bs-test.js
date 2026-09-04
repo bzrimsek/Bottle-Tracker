@@ -93,8 +93,14 @@ const shelfProds = Object.values(catalog);
 // bottles fixture: AE open, Lagavulin all sealed, Raasay open, Weller gone.
 eq('open only', L.shelfFilter(shelfProds, bottles, { status: 'open' })
   .map(p => p.k).sort(), ['AE Single Barrel @ 119.8', 'Raasay Dun Cana @ 104.0']);
+/* Sealed asks whether you HOLD a sealed bottle, not whether nothing is
+   open — see §230. AE Single Barrel has an open one and a sealed spare, so
+   it answers both filters. This assertion used to expect Lagavulin alone,
+   which encoded the bug BZ reported: the chart said 19 and the drill-down
+   said 2. */
 eq('sealed only', L.shelfFilter(shelfProds, bottles, { status: 'sealed' })
-  .map(p => p.k), ['Lagavulin 16 @ 86.0']);
+  .map(p => p.k).sort(),
+  ['AE Single Barrel @ 119.8', 'Lagavulin 16 @ 86.0']);
 // A gone bottle is not on the shelf under any status.
 eq('all excludes gone', L.shelfFilter(shelfProds, bottles, { status: 'all' }).length, 3);
 eq('type filter', L.shelfFilter(shelfProds, bottles,
@@ -5730,7 +5736,10 @@ sec('§210 one pass for what you own');
 
   // The two together, which is what every caller actually wants.
   const ix = L.shelfIndex(bottles);
-  eq('the index carries both', Object.keys(ix).sort(), ['counts', 'open']);
+  /* Three maps now: sealed is held separately rather than derived by
+     negating open, which is what hid every sealed spare (§230). */
+  eq('the index carries all three',
+    Object.keys(ix).sort(), ['counts', 'open', 'sealed']);
   eq('and they are the same two maps',
     [ix.counts['Ardbeg 10'], ix.open['Ardbeg 10']], [2, 1]);
 
@@ -5750,9 +5759,12 @@ sec('§210 one pass for what you own');
   eq('the open filter reads the index, not the bottles',
     L.shelfFilter(products, bottles, { status: 'open' }, ix)
       .map(p => p.name), ['Ardbeg 10']);
-  eq('and the sealed filter is its complement',
+  /* NOT the complement, and this assertion asserting that it was is how the
+     bug survived. Ardbeg 10 has two bottles, one of them open: it is open
+     AND it is sealed, and both filters must return it (§230). */
+  eq('the sealed filter is not the complement of the open one',
     L.shelfFilter(products, bottles, { status: 'sealed' }, ix)
-      .map(p => p.name), []);
+      .map(p => p.name), ['Ardbeg 10']);
 }
 
 /* §211  the three decisions that were made inside a drawing -----------
@@ -7023,21 +7035,221 @@ sec('§229 books on a shelf');
   eq('the biggest is band four', five.tiles[0].band, 4);
   eq('the smallest is band zero', five.tiles[4].band, 0);
 
-  /* Colour. A named type is stable; anything unanticipated still gets its
-     own spine rather than falling back to one shared cream. */
-  eq('bourbon has its own colour',
-    L.spineColour('bourbon'), L.SPINE_COLOURS.bourbon);
-  eq('case does not matter', L.spineColour('Bourbon'),
-    L.SPINE_COLOURS.bourbon);
-  eq('an unknown type still gets a colour',
-    /^hsl\(/.test(L.spineColour('quinoa whisky')), true);
-  eq('and the same one every time',
-    L.spineColour('quinoa whisky'), L.spineColour('quinoa whisky'));
-  eq('two different unknowns do not collide',
-    L.spineColour('quinoa whisky') === L.spineColour('sorghum whisky'), false);
-  eq('every book on a real shelf carries a colour',
-    five.tiles.every(x => typeof x.spine === 'string' && x.spine.length > 3),
-    true);
+  /* Colour now comes from the app's own liquid palette (TYPE_HEX), which
+     the type column already uses, so there is nothing here to test that
+     the render does not read directly. The invented L.spineColour it
+     replaced is gone. */
+}
+
+/* §230  sealed means one thing (rule 30a) -----------------------------
+ *
+ * BZ: "the Sealed variable is not working - the graph shows 19, which I
+ * believe, but the drill down is 2 and on the shelf the search is even
+ * worse."
+ *
+ * Three paths held three definitions. The bar counted sealed BOTTLES. The
+ * drill-down and the shelf filter both asked whether a whisky had NOTHING
+ * open, by negating the open map — and on a shelf stocked one open and one
+ * sealed spare, that hides every spare. 19, 2 and 2 for one word.
+ *
+ * This is the rule 30a shape exactly: one fact rendered by more than one
+ * path, tested per path and never against each other. So the assertions
+ * below drive all three from one shared state and compare them, rather
+ * than checking each in isolation.
+ *
+ * Fixture worked out by hand first:
+ *   A: one open + one sealed spare   open yes, sealed yes
+ *   B: one open only                 open yes, sealed no
+ *   C: one sealed only               open no,  sealed yes
+ *   sealed bottles 2 · whiskies holding one 2 · whiskies open 2
+ *   the old rule would have said 1, which is the bug
+ */
+sec('§230 sealed means one thing, on every path');
+{
+  const catalog = {
+    A: { k: 'A', name: 'Spare Upstairs', sub: 'bourbon' },
+    B: { k: 'B', name: 'Only Open', sub: 'bourbon' },
+    C: { k: 'C', name: 'Never Opened', sub: 'scotch' }
+  };
+  const bottles = [
+    { k: 'A', status: 'open' }, { k: 'A', status: 'sealed' },
+    { k: 'B', status: 'open' },
+    { k: 'C', status: 'sealed' }
+  ];
+  const products = Object.values(catalog);
+
+  const ix = L.shelfIndex(bottles);
+  eq('the index knows what is open', Object.keys(ix.open).sort().join(''), 'AB');
+  eq('and what is sealed, separately',
+    Object.keys(ix.sealed).sort().join(''), 'AC');
+
+  /* A whisky with a spare is BOTH, which is the fact the old rule denied. */
+  eq('a whisky with a spare is open', !!ix.open.A, true);
+  eq('and sealed at the same time', !!ix.sealed.A, true);
+
+  const rows = L.sealedRowCount(catalog, bottles);
+  eq('two whiskies have something open', rows.open, 2);
+  eq('two whiskies hold a sealed bottle', rows.sealed, 2);
+  eq('and there are two sealed bottles', rows.sealedBottles, 2);
+
+  /* The three paths, from ONE state, compared to each other. */
+  const barSealed = rows.sealed;
+  const drill = products.filter(p =>
+    L.myBottles(p.k, bottles).some(L.isSealed)).length;
+  const filtered = L.shelfFilter(products, bottles, { status: 'sealed' }, ix);
+  eq('the bar and the drill-down agree', barSealed, drill);
+  eq('and the shelf filter agrees with both', filtered.length, barSealed);
+  eq('the filter returns the right whiskies',
+    filtered.map(p => p.k).sort().join(''), 'AC');
+
+  const openFiltered = L.shelfFilter(products, bottles, { status: 'open' }, ix);
+  eq('the open filter agrees with the open bar',
+    openFiltered.length, rows.open);
+  eq('and returns the right whiskies',
+    openFiltered.map(p => p.k).sort().join(''), 'AB');
+
+  /* The bug itself, pinned so it cannot come back: negating the open map
+     finds one whisky where the truth is two. */
+  const oldRule = products.filter(p => !ix.open[p.k]).length;
+  eq('the old rule really did undercount', oldRule, 1);
+  eq('and the new one does not', drill > oldRule, true);
+
+  /* The note only speaks when the two numbers differ. */
+  eq('a spare makes the note explain itself',
+    /2 sealed bottles across 2 whiskies/.test(
+      L.sealedNote({ sealed: 2, sealedBottles: 3 })), false);
+  eq('it says both numbers when they differ',
+    /3 sealed bottles across 2 whiskies/.test(
+      L.sealedNote({ sealed: 2, sealedBottles: 3 })), true);
+  eq('and stays quiet when they are the same',
+    L.sealedNote({ sealed: 2, sealedBottles: 2 }), '');
+  eq('and when there is nothing sealed at all',
+    L.sealedNote({ sealed: 0, sealedBottles: 0 }), '');
+
+  /* A gone bottle is not a sealed one. */
+  const withGone = bottles.concat([{ k: 'B', status: 'gone' }]);
+  eq('a gone bottle is not sealed',
+    Object.keys(L.shelfIndex(withGone).sealed).sort().join(''), 'AC');
+}
+
+/* §231  three idea sets, not three lists of the same idea -------------
+ *
+ * BZ asked what the real difference was between the recommender and the
+ * two suggestion cards that predated it. Measured on his own shelf: the
+ * affinity list produced 15 findings, the axis card 13, and of the axis
+ * card's asks the representative ones were "Another Arran", "Another
+ * Benriach", "A Tequila worth owning" — absence restated, which is the
+ * complaint that started this. It was removed.
+ *
+ * What the gap sources can do that nothing else can is point at a bottle
+ * ALREADY YOURS: a flight one pour short whose answer is sealed upstairs,
+ * or something you put on the wishlist. That is an action on your own
+ * shelf rather than a shopping ask, and it is what the second card now
+ * holds.
+ */
+sec('§231 what belongs on the already-yours card');
+{
+  const gaps = [
+    { kind: 'flight', name: 'Longrow 18', owned: true },
+    { kind: 'wish', name: 'Something you wanted' },
+    { kind: 'region', name: 'A Lowland Scotch' },
+    { kind: 'category', name: 'Another Japanese' },
+    { kind: 'pair', name: 'A matched pair' },
+    { kind: 'flight', name: 'A flight needs this bought', owned: false }
+  ];
+  const own = L.ownFindings(gaps);
+  eq('two findings are actionable on the shelf itself', own.length, 2);
+  eq('the sealed bottle upstairs is one', own[0].name, 'Longrow 18');
+  eq('and your own wishlist is the other', own[1].kind, 'wish');
+  eq('a region gap is not on this card',
+    own.some(g => g.kind === 'region'), false);
+  eq('nor a category gap',
+    own.some(g => g.kind === 'category'), false);
+  /* A flight finding you would have to BUY for is a shopping ask like any
+     other, and belongs to affinity now. Only the owned flag earns it a
+     place here. */
+  eq('an unowned flight finding is a shopping ask',
+    own.some(g => g.name === 'A flight needs this bought'), false);
+  eq('an empty list is not an error', L.ownFindings([]).length, 0);
+  eq('a missing list is not an error either', L.ownFindings(null).length, 0);
+}
+
+/* §232  the story the shelf tells ------------------------------------
+ *
+ * BZ: "on the home page, tell the user the story their shelf tells."
+ *
+ * Two rules make this honest rather than flattering, and both are asserted
+ * here. A title must be EARNED by a number, and that number is shown beside
+ * it. And a shelf that qualifies for nothing gets told so — "The
+ * Generalist" — rather than handed the nearest flattering label.
+ */
+sec('§232 the portrait a shelf earns');
+{
+  const mk = (n, extra) => {
+    const cat = {}, bs = [];
+    for (let i = 0; i < n; i++) {
+      cat['p' + i] = Object.assign({ k: 'p' + i, name: 'W' + i,
+        dist: 'House', sub: 'bourbon', proof: 90 }, extra ? extra(i) : {});
+      bs.push({ k: 'p' + i, status: 'open' });
+    }
+    return { cat: cat, bs: bs };
+  };
+
+  eq('an empty shelf has no story', L.shelfPortrait({}, [], {}), null);
+
+  /* A shelf with nothing to insist on is told so, not flattered. */
+  const bland = mk(6);
+  const plain = L.shelfPortrait(bland.cat, bland.bs, {});
+  eq('a shelf with no strong opinion is a generalist',
+    plain.title, 'The Generalist');
+  eq('and says how many it looked at', /6 whiskies/.test(plain.why), true);
+  eq('a generalist has no runners-up', plain.also.length, 0);
+
+  /* PX has to be earned: four is not a preference, and the threshold is
+     five. */
+  const four = mk(4, () => ({ fin: 'Pedro Ximenez' }));
+  eq('four PX bottles do not make a PX Lover',
+    L.shelfPortrait(four.cat, four.bs, {}).title, 'The Generalist');
+
+  const px = mk(20, i => (i < 8 ? { fin: 'Pedro Ximenez' } : {}));
+  const pxP = L.shelfPortrait(px.cat, px.bs, {});
+  eq('eight does', pxP.title, 'PX Lover');
+  eq('and the number that earned it is shown',
+    /8 bottles finished in Pedro Ximenez/.test(pxP.why), true);
+
+  /* A compound finish still counts toward the wood that is in it — the
+     whole reason woods are split (§228). */
+  const comp = mk(20, i => (i < 8 ? { fin: 'Pedro Ximenez+Port' } : {}));
+  eq('a double finish still counts as PX',
+    L.shelfPortrait(comp.cat, comp.bs, {}).title, 'PX Lover');
+
+  /* Every line of the story carries a figure. A sentence about somebody's
+     own shelf with no number in it is an opinion. */
+  eq('every line of the story has a number in it',
+    pxP.lines.every(l => /\d/.test(l.text)), true);
+  eq('the story is not empty', pxP.lines.length > 0, true);
+
+  /* Runners-up are titles that were also earned, never filler. */
+  const loud = mk(60, i => Object.assign(
+    { dist: i < 20 ? 'House' : 'Other' },
+    i < 20 ? { fin: 'Pedro Ximenez' } : {},
+    i >= 20 && i < 45 ? { proof: 120 } : {}));
+  const loudP = L.shelfPortrait(loud.cat, loud.bs, {});
+  eq('a loud shelf earns more than one title', loudP.also.length > 0, true);
+  eq('and every runner-up carries its evidence too',
+    loudP.also.every(a => /\d/.test(a.why)), true);
+  eq('the title is not repeated among the runners-up',
+    loudP.also.some(a => a.title === loudP.title), false);
+
+  /* Deterministic: the same shelf tells the same story. */
+  eq('the same shelf tells the same story',
+    L.shelfPortrait(px.cat, px.bs, {}).title, pxP.title);
+
+  /* A gone bottle is not on the shelf and cannot earn anything. */
+  const gone = mk(20, i => (i < 8 ? { fin: 'Pedro Ximenez' } : {}));
+  gone.bs.forEach(b => { b.status = 'gone'; });
+  eq('a shelf of gone bottles has no story',
+    L.shelfPortrait(gone.cat, gone.bs, {}), null);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

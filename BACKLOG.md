@@ -1,559 +1,208 @@
-# Killer B's Bottle Tracker — backlog
-
-Checked against the code and data at v0.1.36, not against memory. Two items
-closed since the last revision (US coordinates completed, the two price
-errors corrected).
-
----
-
-## Blocked on you
-
-### 1. Multi-user, sharing and tasting night
-The largest missing feature, and what the app was originally scoped around.
-Every shelf currently lives in one browser.
-
-Needs from you: the Firebase project config, and one decision — do guests
-join a tasting **by code** (fast, no accounts, nothing persists) or **by
-account** (slower to start, but their answers carry across nights)?
-
-Unbuilt on top of it:
-- Tasting-night mode. You asked for all three: host-only with paper, guests
-  scoring blind on their phones, and a live reveal. None exist.
-- The blind column locking on submit, so an answer cannot change once
-  anyone has seen the reveal.
-- Post-night summary: what the room got right, which pour fooled everyone.
-  Today the SMS carries the flight and its snacks, not what happened.
-
-### 2. Turn on the lookup and design service
-`lookup.gs` ships with the app and does nothing until you paste it into
-script.google.com, add `ANTHROPIC_KEY` to Script Properties, deploy as a web
-app, and paste the `/exec` URL into Settings.
-
-Three features are inert without it:
-- Filling a new bottle's fields from its name, in Shop and Add a bottle.
-- AI flight design (Build a flight falls back to the local recommender).
-- `fillMissingNotes()`, the batch run for item 4.
-
-### 2b. Shared shelves, matched bottles, and Join Me Pour
-Requested 2026-08-31. Decisions taken: **one bottle, not a flight** ·
-**asynchronous** · **built for three from the start**. Sits on top of item 1.
-
-**Part one — share a shelf.** A user grants another read access. Read-only
-by construction: your corrections are yours, and a buddy must never be able
-to retire your bottle. Two things must NOT travel with a shared shelf —
-what you `paid`, and your private notes. MSRP is a public fact about a
-bottle; what you paid is a fact about you.
-
-**Part two — match across shelves.** Open bottles only: a sealed backup is
-not a match, it is a maybe. One bottle in common is a low enough bar that
-three shelves will clear it easily, which is why the one-bottle decision
-makes this tractable.
-
-**Part three — Join Me Pour, asynchronous, over text.** Pick a bottle you
-all have open; everyone gets the same message with what to pour, how much,
-and what to look for. Asynchronous means nobody needs a shared clock —
-everyone pours within a day or two and the answers assemble as they arrive.
-The message must stand alone: nobody installs anything to join a pour.
-
-**Part four — three, not two.** Nothing in the message, the matching or the
-results may assume a pair.
-
----
-
-#### The barcode question — scan it, but do not key on it
-
-Scanning is the right idea and solves the real problem, which is that two
-people who own the same whisky must land on the same catalog entry or
-nothing downstream works. A scan is typo-free and instant at a shop shelf.
-
-But a UPC identifies a **SKU, not a liquid**, and this shelf proves it:
-
-- **32 single barrels.** Every Blanton's bottle carries the same UPC and
-  contains a different barrel. Keying on UPC would declare two different
-  liquids identical — and single barrels are exactly the bottles worth
-  comparing across shelves.
-- **20 vintage or annual releases.** Ardbeg Committee, Fèis Ìle, Booker's
-  batches. Some reuse a code across years at a different proof. Old Elk
-  Infinity, the bottle still missing from the catalog, is precisely this
-  case.
-- **One product, several codes.** 750ml against 1L, US against EU, and any
-  package redesign. A UPC-keyed catalog fragments one whisky into three.
-- **The shipped catalog has no UPCs at all** and cannot be given them
-  remotely — a code only exists once someone holds the bottle. So UPC can
-  never be the primary key for the 325 already here; it can only accrue.
-
-So: the catalog key stays the product identity, and barcodes become a
-many-to-one **index onto it** — `barcodes: { "<code>": "<catalog key>" }`.
-Several codes may point at one product; a scan resolves to that product;
-per-bottle proof continues to distinguish one barrel from another, which the
-app already models.
-
-That gives the matcher a confidence ladder rather than a yes or no: a shared
-UPC is a strong match, the same catalog key is a good one, the same
-distillery and expression at a different barrel is a near match worth
-showing. For the 256 standard releases here, a UPC match will be exact and
-effortless, which is the majority of any Join Me Pour.
-
-It also makes the barcode database a by-product of use: the first person to
-scan an unknown code types the bottle once, that mapping is shared, and
-nobody types it again. This supersedes item 6, which described the same idea
-without the shelf-matching reason for it.
-
-**Visibility.** A buddy sees your whole shelf — that is the fun of it, and
-it invites "you have WHAT open?". The overlap is computed and shown only
-when a pour is being set up, where it is the thing you actually need.
-
-**No structure around the pour.** It is a pour, not an event: pick a bottle
-you both have open, send the text, and that is the whole of it. No scoring,
-no scheduling, no reveal, no results to assemble. Anything that would need a
-protocol belongs in tasting night, which is item 1.
-
-**The slot machine is where a match should surface.** Time for a Taste
-already knows what is open and already lands on one bottle. If a buddy's
-shelf is shared, the payline is the natural place to say so — a mark on the
-glass, and a line reading that Marcus has this open too. It turns a match
-into something you stumble on while deciding what to drink, rather than a
-screen you have to go and look at, and it costs nothing beyond an
-intersection the app already has to compute.
-
-**Find me a match, as an option rather than a badge.** Better than marking
-matches passively: a mode on the machine that spins only across bottles a
-buddy also has open. That way a match is something you ask for when you want
-company, not a badge quietly steering you back toward the bottle you always
-reach for — which was the risk with the passive version.
-
-The code is already the right shape for it. `spinValid` builds its candidate
-pool with a single filter and then describes whatever it picked; adding
-"and someone else has this open" is one more predicate on that filter, and
-every guarantee the machine already has comes along unchanged — the payline
-can still never come up empty, holds are still honoured, and an impossible
-combination still says which hold to release rather than spinning to
-nothing. The message when it fails writes itself: nothing Marcus has open
-matches Islay and 120-plus, release a hold.
-
-**Duo and trio shown separately, and it stops there.** A result says either
-"you and Marcus" or "all three of you", as two distinct outcomes rather than
-one blurred list — a trio match is the rarer and better find, and burying it
-among the duos wastes it. Past three the combinatorics stop being worth it:
-four people give eleven possible groupings and the interesting one is still
-just everybody. Cap the feature at the two shapes and let a fourth buddy
-count toward the trio-or-more case rather than opening a new tier.
-
-That also keeps the shape simple where it matters — the pool filter takes a
-list of shelves and a rule of any or all, and the UI shows two results.
-
-Still true either way: a spin is judged on your own shelf first. The match
-decides which bottles are eligible, not which one is good.
-
-#### Our shelves, as a picture — settled
-
-Three circles, the count of common bottles written in each overlap, and a
-tap on any region opens the list. Decided 2026-08-31.
-
-Deliberately NOT area-proportional. Three circles can only carry correct
-proportional overlaps across a narrow range of set sizes, and this is well
-outside it — a 325-bottle shelf against a buddy's eighty is a 2:1 radius
-before any overlap is considered, and the seven regions will not resolve.
-Equal circles with the counts written in carry the magnitude honestly; a
-Venn that quietly lies about area is worse than one that plainly does not
-encode it.
-
-The drill-through is not new mechanism. Tapping a region and getting a
-tappable bottle list that leads to the bottle is exactly what the dashboard
-charts already do — same helper, different source set.
-
-Seven regions, and the two that matter most are not the obvious ones:
-
-- **All three** — the Join Me Pour list.
-- **You and one buddy** — two of these, and the reason duo and trio are
-  shown separately elsewhere in this item.
-- **They both have it, you do not** — the shopping list. Two people you
-  trust both bought it.
-- **Only you** — what you bring to the group that nobody else can.
-
-The last two are the reason to draw the picture at all. The outer totals are
-scaffolding.
-
-A toggle between WHISKIES and OPEN bottles, defaulting to open. Open is
-honest for pouring and makes every region smaller; whiskies is the better
-shopping list, since a sealed bottle still says something about taste.
-
-A fourth person breaks the shape — four sets need ellipses or a bar per
-intersection — which is another reason the feature caps at duo and trio.
-
-#### Holding a bottle back
-
-You buy something, it goes in inventory, and your friends can see it — but
-sometimes the whole point is that nobody knows until you pour it. Every
-bottle needs a **held back** state: yours in every way, invisible to
-everyone else.
-
-The naive version is a private flag on the bottle, and it does not work,
-which is probably why Only Drams has not solved it. **The aggregates leak.**
-If a buddy sees your shelf reading 324 today and 325 tomorrow with no new
-bottle appearing, they have learned there was something hidden and roughly
-when you bought it. The same leak runs through every shared number: the
-totals, the by-type chart, the Scotch-by-region bars, the map pin counts,
-the Venn regions, and the shelf value.
-
-So the rule has to be stronger than hiding a row. A held-back bottle is
-absent from EVERY shared surface, and what a buddy sees is a smaller,
-internally consistent shelf rather than yours with a gap in it. Their view
-should be indistinguishable from you simply not owning the bottle. If that
-property does not hold everywhere, the feature is decorative.
-
-Two specific places it must reach beyond the obvious:
-- **Matching and Join Me Pour.** A held-back bottle must never be matchable,
-  or a buddy gets offered a pour of something they cannot see.
-- **The trio region of the Venn.** If both buddies own it and you are hidden,
-  the region correctly reads as a duo. That is the intended lie and it is a
-  consistent one.
-
-**Default is shared.** Held back is the deliberate act, because the reverse
-default makes sharing useless the first time you forget. But forgetting the
-other way costs you a surprise, so the shelf needs a standing, visible count
-— "3 bottles held back" — somewhere you cannot miss it, and each held-back
-bottle should be marked on its own row too.
-
-**Release** should be one tap from that count, and it should support
-releasing all of them at once, since the natural moment is the drive home
-from the tasting where you poured them. An optional release-on-date is worth
-having for a bottle bought well ahead of a specific night, but the manual
-path is the one that will get used.
-
-Worth noting for whoever builds it: this is easier to get right if held-back
-is filtered at the point the shared view is BUILT rather than at the point
-it is rendered — one filtered copy of the shelf, and every chart, count and
-match computed from that copy. Filtering per surface is how one of them gets
-missed, and the one that gets missed is the leak.
-
-### 2b-i. One resolver, not a batch script
-Design constraint agreed 2026-08-31, and it governs 2, 2c and 2d.
-
-Whatever fills in the 138 has to be the same code path that fills in bottle
-number 326. The failure mode to avoid is obvious once named: build a batch
-enrichment script, run it once against the backlog, and then every bottle
-bought afterwards goes through a different and worse path — hand-typed at
-the shop, with none of the sources the script had. The backlog gets clean
-once and starts rotting again the same week.
-
-So: **one resolver**. Give it a bottle name, get back fields with a source
-attached to each. The batch run is that resolver in a loop over 138 names;
-Shop and Add a bottle are that resolver called once. Nothing about the
-sources, the ordering or the trust rules is duplicated between them.
-
-**Sources tried in order, cheapest and most trusted first:**
-1. The shared catalog — free, instant, and already correct for anything a
-   user has resolved before.
-2. WHISKY:EDITION — free, official, carries notes. Scotch-heavy.
-3. Whiskybase — obscurity, age, strength, coordinates, market price.
-4. The model via `lookup.gs` — the only one that can reach a bottle nobody
-   has catalogued, and the only one that can be wrong in a fluent way, so it
-   goes last and is told to return null rather than guess.
-
-**Provenance has to be per FIELD, not per bottle.** This is the part that
-will be got wrong if it is not written down now. Once sources are mixed, a
-single bottle can carry an age from Whiskybase, notes from WHISKY:EDITION, a
-price you typed off the OHLQ shelf, and a finish I read off a label. Storing
-one source per bottle throws that away, and the current `tnSrc` field is
-already bottle-level — it works today only because every note came from one
-place. It will not survive the second source.
-
-**Whatever is resolved goes back into the shared catalog.** That is what
-makes the cost fall to nothing over time: the first person to resolve a
-bottle pays for it, everyone after gets it free, and it is the same
-convergence the join key in 2b needs. A resolver that only writes to one
-user's shelf is a resolver that pays for the same whisky forever.
-
-**Review before write stays.** Batch or single, nothing lands on the shelf
-unread. For the batch that is the CSV on your Drive; for a single bottle it
-is the form fields marked as looked-up, which the app already does.
-
-### 2c. Where the missing tasting notes could come from
-Three sources evaluated 2026-08-31. Ranked by what they actually solve.
-
-**BottleDB (bottledb.org) — ruled out.** Its own front page reads
-"gratefully serving everyone with information about 13 bottles". Thirteen.
-An early-access project that has not been populated. Nothing to evaluate.
-
-**WHISKY:EDITION (thewhiskyedition.com/developer) — try this first.**
-The best fit on paper and the only one of the three that returns tasting
-notes at all:
-- Free, official, no key, published OpenAPI spec, Creative Commons 4.0.
-  Attribution required — a link to WHISKY:EDITION wherever the data is used,
-  which is a fair price and belongs in the Info tab.
-- `/api/whisky-reviews/{slug}` returns `tasting_notes` as **nose, palate,
-  finish** — no colour, so our fourth column would stay empty from this
-  source.
-- Metadata carries type, country, region, distillery, bottler, age, abv,
-  price per litre and a flavour tag. Ratings are per-author, 0-100, from four
-  named reviewers, plus a value-for-money score.
-- Full-text search plus filters on distillery, region, abv, age and price,
-  so a coverage probe is cheap to run.
-
-**The catch, and it is the whole question: coverage.** They have reviewed
-close to a thousand whiskies, and the published index is overwhelmingly
-Scotch and European — Nc'Nean, Littlemill, Talisker, Springbank, German
-craft. **194 of our 325 bottles are American or Canadian.** So the expected
-hit rate on the 138 missing notes is probably low, and low exactly where the
-gap is biggest.
-
-**Do the probe before building anything.** Take twenty bottles from the
-missing 138 — ten bourbon, five Scotch, five Irish — search each by name,
-and count the hits. That is twenty free calls and it decides the whole
-question. Above roughly a third, wire it up; below that, it is a nice source
-for the Scotch shelf and not an answer for the rest.
-
-**Provenance, and the mistake not to repeat.** These are the considered
-notes of four named reviewers. That is a FOURTH category, distinct from the
-distiller's own notes, from your tasting, and from the prompts I wrote for
-the flight cards. The source list needs a `review` entry crediting
-WHISKY:EDITION by name, and it must never be presented as the distiller's.
-
-### 2c-ii. Pour Picks — the bourbon half, and the best of the four
-Found 2026-08-31. `github.com/bguillow-rgb/pour-picks-mcp`, MIT, the catalog
-behind the Pour Picks iOS journal. 4,700+ bottles, **bourbon-focused** —
-precisely where WHISKY:EDITION is thin and where our gap is biggest.
-
-**The important detail is not the MCP wrapper.** An MCP server over stdio is
-the wrong shape for a static PWA and for Apps Script. But the README says
-the query paths are plain SELECTs against publicly readable Supabase tables
-under row-level security, and there is a streamable HTTP endpoint published
-as well. So the data is reachable over ordinary HTTPS from `lookup.gs` — no
-npm, no MCP client, no key. That is what makes it fit the one-resolver rule
-in 2b-i instead of being a thing only an AI client can use.
-
-**What it carries:** structured tasting profiles, price, pairings, community
-ratings WITH rating counts so sample size is visible, and freshness dates per
-bottle. Attribution requested, not required by licence, and easily given.
-
-**Two claims in the README worth taking seriously.** All scoring is
-deterministic with no AI calls inside the server, and every response carries
-source attribution and a citation-ready line. That is a project being honest
-about provenance, which is the quality that matters most here.
-
-**Where it also helps beyond notes:** `find_similar` and
-`find_cheaper_alternative` are exactly the question the Shop tab asks and
-the flight builder's "one to buy" answers today from our own shelf alone.
-A second opinion grounded in 4,700 bottles is a real improvement on a
-suggestion drawn from 325.
-
-**Risks, stated plainly.** Zero stars, zero forks, fourteen commits, one
-author — this is days old. It depends on someone's Supabase project staying
-up, which is a weaker guarantee than an official API and a stronger one than
-a scraper. And it logs every query: tool name, arguments, client and
-duration go to a write-only table. Your bottle searches would be in
-somebody's telemetry. Not disqualifying for public catalogue lookups, but it
-is a reason to send only the bottle name and nothing about your shelf.
-
----
-
-#### The two together cover almost all of it
-
-Splitting the 138 missing notes by which source would plausibly hold them:
-
-| | bottles | source |
-|---|---|---|
-| American | 79 | Pour Picks |
-| Scotch, Irish, world | 52 | WHISKY:EDITION |
-| Canadian, tequila, other | 7 | neither — the model |
-
-**131 of 138, about 95%, in principle reachable from two free sources**, with
-the model in `lookup.gs` as the backstop for the remainder. That is a much
-better answer than any one source, and it is the direct argument for the
-resolver design in 2b-i: a chain of sources, cheapest first, each field
-carrying where it came from.
-
-Probe both before building. Ten bourbons against Pour Picks, ten Scotch
-against WHISKY:EDITION, count the hits, and let the real numbers decide
-rather than this table.
-
-### 2c-iii. Probe, then run the whole shelf — not just the gaps
-Decided 2026-08-31. Probe both sources first; if they hold up, run all 325
-rather than only the 138 missing notes.
-
-**Why the whole shelf is the right call.** Filling blanks is the smaller
-half. The larger half is checking what is already there, and a full run is
-the only thing that can catch the class of error `validate.py` structurally
-cannot: a record that is internally consistent and simply wrong. Ardbeg Wee
-Beastie is the proof — no age stored, five years on the label, and every
-consistency check passes because nothing contradicts anything. There are
-**241 bottles with no age stored**, and no way to know how many are false
-negatives without asking a second source.
-
-What a full run is actually reconciling:
-
-| | count | what the run does |
-|---|---|---|
-| notes already stored | 187 | second opinion on notes I wrote, unsourced |
-| notes missing | 138 | fill |
-| age stored | 84 | verify |
-| age missing | 241 | the Wee Beastie class |
-| finish stored | 110 | verify |
-| secondary price | 125 | replace Only Drams figures with live ones |
-| obscurity | 325 | every one still seeded, never corrected |
-
-**The output is a reconciliation, not a write.** At 325 rows nobody can
-review a flat list meaningfully, so the report has to be sorted by what
-needs a decision:
-
-- **CONFLICT** — a source disagrees with a stored value on a checkable fact.
-  Few rows, highest value, read every one.
-- **FILL** — the field was empty and a source has it. Bulk, low risk,
-  approve wholesale.
-- **SUPERSEDE** — a sourced note where one of my card prompts sits today.
-  A real source beats a prompt I wrote, but that is your call to make, not
-  the script's.
-- **CONFIRM** — source agrees. No action, but the count is the number that
-  tells you whether to trust the run at all.
-- **MISS** — nothing found. Feeds the model backstop.
-
-**Make it re-runnable.** 650 calls exceeds the six-minute Apps Script limit
-at any sane rate, so it batches and resumes — `fillMissingNotes()` already
-works this way. Do the same and the run becomes something worth repeating
-in a year, reporting only what changed since. Pour Picks supplies freshness
-dates per bottle, which makes that diff cheap.
-
-**Nothing is written until you have read the CONFLICT rows.** That rule has
-already caught two errors this session from a single OHLQ page; at 325 rows
-across two sources it will earn its keep several times over.
-
-### 2d. Whiskybase via parse.bot — worth it, for QA and obscurity
-Found 2026-08-31. An unofficial but maintained REST wrapper over
-whiskybase.com. Six endpoints: search, distilleries with coordinates,
-distillery catalogues, new releases, marketplace listings, and the Top 1000.
-
-**It checked out on the one bottle we could verify.** The published sample
-response is Ardbeg Wee Beastie, which is on the shelf. Strength came back
-47.4 %vol — 94.8 proof, matching our data exactly. And it caught a real gap:
-it states an age of 5, where we have no age at all. Wee Beastie IS a
-five-year-old Ardbeg, so our record is wrong. 241 of 325 bottles have no age
-stored, and at least one of those is a false negative.
-
-**What it is genuinely good for, in order:**
-
-1. **Fixing obscurity.** Every one of the 325 bottles still carries the
-   `obscurity` value I seeded from distillery footprint, never corrected by
-   hand, and it drives an entire reel of the tasting machine. Whiskybase
-   rating and vote count are a real measure of how known a bottle is —
-   vastly better than my guess. This is the highest-value use and it is not
-   obvious from the endpoint list.
-2. **Age and strength QA.** Cross-check the enriched fields against a second
-   source and report disagreements rather than overwriting. The Wee Beastie
-   miss is exactly the class of error `validate.py` cannot find on its own,
-   because internally the record is consistent.
-3. **Distillery coordinates.** `get_distilleries` with `include_location`
-   returns latitude and longitude. This would have saved hand-placing 94
-   distilleries, and could place the 17 bottles still off the map — the
-   Canadian, Japanese, world and tequila categories.
-4. **Secondary prices.** `get_marketplace_listings` gives real listings. The
-   `sec` field on 125 bottles came from the Only Drams export and two of
-   them were wrong enough to trip QA, so a live source is an improvement.
-
-**What it does NOT solve, and this matters:**
-
-- **Tasting notes.** The API explicitly does not return tasting notes,
-  flavour profiles or user reviews. So it does nothing for item 4, the 138
-  bottles with no notes — which is probably the first thing you would hope
-  it did.
-- **Barcodes.** No UPC field, so it does not help the shared-catalogue join
-  key in item 2b.
-- **MSRP.** Marketplace listings are secondary prices, not retail. OHLQ
-  remains the better source for what you actually pay.
-
-**Coverage risk.** Whiskybase is strongest on Scotch and European single
-malt. 194 of 325 bottles here are American or Canadian, which is where its
-coverage thins. Worth a cheap test before committing: search twenty bourbons
-off the shelf and count the hits.
-
-**Cost and terms.** Free tier is 200 credits a month at 5 requests a minute;
-search is 1 credit, so the whole shelf is two free months or one $30 month.
-But it is not an official API — Whiskybase publishes none — it is a scraper
-with a self-healing layer in front of it. That means a terms-of-service
-question and a dependency that can break, and it would be a second key
-alongside the Anthropic one from item 2.
-
-**Recommendation:** worth doing, as a one-off enrichment run rather than a
-live dependency. Pull once, write the results into `data.json` behind a
-review step exactly like `fillMissingNotes()`, and record where each field
-came from. Nothing in the app should call it at runtime — a shelf that stops
-working because a scraper broke is a bad trade for data that changes once a
-year.
-
-**Order of play, decided 2026-08-31.** Probe WHISKY:EDITION first, since it
-is free and is the only source that carries notes. Use Whiskybase for what
-it is uniquely good at regardless — obscurity from vote counts, age and
-strength QA, distillery coordinates — since those do not overlap. And if
-neither closes the gap on the American half of the shelf, fall back to the
-one-off enrichment run through `lookup.gs`, which is the only option that
-can reach any bottle rather than only the ones somebody has already
-catalogued.
-
-### 3. Old Elk Infinity Blend
-Still not in the catalog. It is an annual release and the proof changes each
-year, so that number has to come off your bottle. Add it through Shop.
-
----
-
-## Loose ends I created and have not closed
-
-### 4. The 138 bottles with no tasting notes
-187 of 325 carry colour, nose, palate and finish — all lifted off the flight
-cards, and all of them prompts I wrote rather than sourced. The other 138
-have nothing. `fillMissingNotes()` sources them into a CSV on your Drive for
-review, which needs item 2. Your own notes on a bottle you have actually
-tasted are the better answer wherever you have one.
-
-### 5. Wishlist, and what is missing from the shelf
-Extended 2026-08-31 at BZ's request. Three parts; the first is overdue.
-
-**Part one — the wishlist itself.** Six bottles referenced by the flight
-cards are ones you do not own: Pappy Van Winkle 15, Van Winkle Lot B, Old
-Rip Van Winkle 10, Longrow 18, and two Heaven Hill Grain to Glass releases.
-That is why Who's Your Daddy? is a three-pour flight and Peat Is a Postcode
-is five, and why QA reports one as short on every run. A wishlist state
-models those rather than dropping them.
-
-Shop gets an **Add to wishlist** beside I bought it — the common case is
-seeing a bottle, not buying it today, and wanting to remember why. It should
-record the reason, not just the name: which flight it would complete, which
-gap it fills.
-
-**Part two — what is missing.** The valuable half, and most of it needs no
-AI at all. The app already knows enough to compute real gaps:
-
-- **Thin categories.** Wheat 1, tequila 1, Japanese 2, world 2, flavoured 3.
-- **Thin Scotch regions.** Lowland 1 and Campbeltown 1, against Islay 39.
-  A region flight cannot be built on one bottle.
-- **Proof distribution.** 159 bottles under 100 proof against 27 above 120,
-  so a proof ladder runs out at the top.
-- **Flights that cannot be run.** Two are short of pours. The builder
-  already computes a "one to buy" per flight; aggregating that across all
-  36 gives a shopping list where every entry names the flight it unlocks.
-  That is the strongest version of this and it is nearly free.
-- **Matched pairs one bottle short.** Same distillery, same proof, one
-  variable apart — the app can already find where a pair is incomplete.
-
-AI's job is narrow and comes last: turning a computed gap into named bottles
-that would fill it at a price worth paying. The gap analysis stays local and
-honest; the model only suggests what to buy, and a suggestion that does not
-verify gets dropped — the same shape as the flight builder.
-
-**The failure mode to design against:** a recommender that says buy Pappy.
-Expensive, obvious, useless. The good version is biased toward cheap bottles
-that unlock something — a $40 Lowland that makes a region flight possible
-beats a $400 bourbon that changes nothing. Rank by what it enables per
-dollar, not by prestige.
-
-**Part three — the same view across buddies.** Once shelves are shared, the
-question becomes what is missing from the GROUP. The Venn's "they both have
-it and I do not" region is the personal version. The group version asks what
-one bottle, bought by any of the three, would most improve what you can all
-taste together — a better question than what any single shelf lacks, and the
-natural thing to look at while setting up a pour.
-
-Depends on item 1 for shared shelves and item 2b for the matching.
-
+# Backlog
+
+Open work, in the order BZ set on 2026-09-03: security, then performance,
+then finding the bottle. Exercising sharing with a second person came off
+the top because it is not something he controls — it waits on somebody else
+turning up. Everything under Closed is kept for the reasoning rather than
+the task, and still carries the numbers the code comments refer to. Last
+reconciled 2026-09-03, at v1.26.19.
+
+## 1. Security
+
+**A write ceiling on `upc`** — SHAPE DONE 2026-09-03, THE REST OPEN.
+Every shared node bounded what may be written to it except the barcode
+pairings, which any signed-in account could write anything to. The rule now
+requires a key of exactly twelve digits, which is what upcKey produces; a
+name that is a string between 2 and 100 characters; a timestamp that is a
+number and not in the future; an optional price within a sane range and an
+optional size under twenty characters; and nothing else at all. Writing over
+an existing pairing is still admin-only, as it was.
+
+What that does NOT do, and it is worth being plain about it: it stops junk
+being stored, and it does not stop volume. Twelve digits is a trillion
+possible keys and a determined account could still fill them one valid row
+at a time. Realtime Database rules cannot express a rate limit.
+
+If the circle grows past people BZ knows, the answer is to route a learned
+pairing through `contrib` — which is already per-account and already
+reviewed — instead of writing the shared node directly. That makes the
+shared node admin-write-only, exactly like the library, and keeps the
+teach-it-once property at the cost of a pairing not being shared until it
+has been looked at. Not worth the review burden today.
+
+**Nothing else is unbounded.** Checked the whole file on 2026-09-03:
+directory, requests, shares, sharedWith, shared, view, admins, stats and
+contrib all bound both who may write and what shape it must be.
+
+## 2. Performance
+
+**The shelf redraws whole, and counts by scanning.** `ownedCount` walks all
+345 bottles for each of 327 products — 111,800 comparisons, about 67ms per
+redraw — and `renderShelf` is undebounced, so a six-letter search runs that
+six times. Neither needs a redesign. One pass over `S.bottles` building a
+key-to-count map turns 111,800 comparisons into 345, and that is essentially
+the whole 67ms; a debounce of roughly 150ms handles the rest, with the
+filter chips still redrawing immediately, since a tap is a decision and a
+letter is not.
+
+**Logic that ships untested**, which belongs with this because it is the
+same edit. `openSealed`, `publishBatch` and `pendingForLibrary` compute
+inside render functions, so the harness cannot reach what they compute.
+Rule 30 exists because of this, and the week of 2026-09-03 is the argument
+for it: every serious fault was in code the tests could not see, or could
+see only one half of.
+
+## 3. Finding the bottle
+
+**The Google button.** One link, the bottle name already in it, on the
+bottle view and on any hunt or allocated tag. Reasoning under item 15 below,
+including the three larger designs that were rejected — the secondary
+market, OHLQ alone, and a shop list with search templates and a price
+comparison, which was right in outline and far too much machinery.
+
+## Waiting on somebody else
+
+**Sharing has never been exercised end to end with another person.** The
+library, the contribution queue, suspend, the shared shelves — all of it has
+only ever been used by the account that owns it, and the week of 2026-09-03
+shipped six changes into exactly those paths. Two devices on one account was
+already enough to find opposite Accept and Drop buttons. Not actionable
+alone; worth doing the hour somebody else signs in.
+
+**The candidate finder has never put a bottle in BZ's hands.** Until a
+suggestion is followed through to a purchase the feature is unproven in the
+only way that counts.
+
+## Accrues on its own
+
+**Barcode coverage.** The scanner works and knows nothing until a listing is
+pasted or somebody names a miss. About half the shelf appears on a retail
+listing; single barrels and festival bottlings never will. Nothing to build.
+
+## Deferred features
+
+**Gifts** — the wishlist pointed outward (item 5b).
+**Receipt ingest by email** (item 7).
+**Road trip planner** — blocked on a routing decision (item 8).
+**Tasting night on phones** — paper works; the phone variants are deferred
+(item 10).
+**A budget on a lookup run** (item 11). The circuit breaker added on
+2026-09-03 stops a run after five consecutive errors, which was the
+dangerous half. What is left is an estimate before a run starts and a total
+after it, which is comfort rather than protection.
+**Pooled flights cannot be fully blind** — noted, not blocking (item 12).
+
+## New, from 2026-09-04
+
+### Score the shelf, and hand back a roadmap
+BZ: "come up with a metric and give people guidance to the bottles they
+should buy to get to the next level - it may be cheesy, but dudes love to
+compete and we can show them a roadmap."
+
+The pieces already exist and were built this session. `L.tasteProfile`
+knows depth, breadth, wood families, peat levels, proof quartiles and
+mashbills. `L.shelfPortrait` already turns those into a named identity a
+shelf has EARNED, with the number that earned it. `L.likelyToLike` already
+produces ranked asks with reasons. A score is the same evidence read as a
+position rather than a description, and the roadmap is the affinity list
+filtered to the findings that would move it.
+
+What has to be decided before building it:
+
+- **What the score measures.** Breadth and depth pull opposite ways, and a
+  metric that rewards both equally rewards neither. A 344-bottle shelf that
+  is all bourbon and a 40-bottle shelf covering nine categories are both
+  good collections and a single number will call one of them worse. The
+  honest shape is probably several scores — depth, breadth, wood, strength,
+  provenance — with no total, or a total the app refuses to rank against
+  anybody else's.
+- **Whether it compares people.** BZ named competition as the point, which
+  needs the multi-user shelves to be real first, and needs a view on what
+  happens to somebody whose shelf is small. A leaderboard of who owns more
+  whisky is a leaderboard of who has more money, which is not a thing this
+  app should be built to celebrate.
+- **The roadmap has to be honest about cost.** "Next level" that requires a
+  £400 bottle is not guidance, it is a shopping list. The candidate finder
+  already tags allocated bottles and sinks them; the same rule applies here
+  and harder.
+
+Blocked on nothing technically. Worth doing after a second person is
+actually using the app, since half of what makes it fun does not exist for
+one user.
+
+## Not looked at
+
+The visual pass covered contrast, the liquid band, one dark surface per
+screen and the type scale. Nothing else.
+
+## A pattern worth keeping
+
+Every serious fault in the week of 2026-09-03 was two functions holding one
+rule with only one of them taught: parseLookup against cleanFinish, the reel
+help against the reels, needsEnhancing against enhanceDiff, the parse
+against the diff, bottleGaps against needsEnhancing, libraryEntry against
+everything else. In every case both sides had tests and both passed, because
+each was tested alone. The assertions that caught them test the PAIR, and
+each is two lines at the end of a section that already exists: what the
+queue asks about, the diff must be able to use; what the parse emits, the
+diff must be able to read; what one screen publishes, another must not
+immediately queue.
+
+## Closed
+
+### 6. Barcode scanning — DONE
+The camera and the decoding are the browser's own, so it costs nothing.
+The barcode store answers FIRST, because a number cannot be searched on a
+shelf keyed by name, and says so plainly when nothing knows the code. A
+miss where you then type the name teaches the pairing and shares it, so
+the next person to scan that bottle does not type it again. Listings are
+pasted rather than fetched. See item 14 for what it does not know yet.
+
+### 13a. Dimensions — DONE
+Findings were computed from what is ABSENT, and absence is unbounded.
+Seven axes chosen by the user instead: region, distillery, cask,
+strength, age, price, category. Each returns bounded, named things to
+find rather than categories to translate, works on a shelf with no
+flights, and narrows a search as readily as it shapes a suggestion.
+
+## Closed
+
+### 1. Multi-user, sharing and tasting night — DONE
+Google sign-in, per-user rules, a directory, requests and shares, all live. Tasting-night mode is NOT built and moves to item 10.
+
+### 2. Turn on the lookup and design service — DONE
+Key in Script Properties, deployed, working. The workspace header was the catch: an identity-linked key will not authenticate without it.
+
+### 2b. Shared shelves, matched bottles, and Join Me Pour — DONE
+Shared shelves, the three-circle Venn with counts in the overlaps, Join Me Pour and find-a-match on the slot machine. Untested with a second person.
+
+### 2b-ii. An imported shelf needs enriching, and someone pays for it — DONE
+Fill in your shelf, behind the gear. Writes to the user own edits, never the shared catalogue. Cost is still uncapped — see item 11.
+
+### 2b-i. One resolver, not a batch script — DONE
+The resolver is lookup.gs and the app calls the same endpoint. Fill in your shelf runs it over a whole collection.
+
+### 2c. Where the missing tasting notes could come from — DONE
+Settled. WHISKY:EDITION has notes and hit 7 of 14; Pour Picks has none at all, only flavour tags. The model with web search did the rest.
+
+### 2c-ii. Pour Picks — the bourbon half, and the best of the four — DONE
+Wrong. Pour Picks carries no tasting notes — that assumption cost a projection of 131 bottles that turned out to be zero from that source.
+
+### 2c-iii. Probe, then run the whole shelf — not just the gaps — DONE
+Run, three times. Each pass found a matcher bug; the third was clean.
+
+### 2d. Whiskybase via parse.bot — worth it, for QA and obscurity — DONE
+Not needed. Obscurity came from Pour Picks popularity_tier, and notes from elsewhere.
+
+### 3. Old Elk Infinity Blend — closed
+Consumed before it was ever catalogued, so there is nothing to add. Closed
+2026-09-01.
+
+### 4. The 138 bottles with no tasting notes — DONE
+310 of 325 now carry notes. The 15 left are single barrels and private picks with nothing published anywhere.
+
+### 5. Wishlist, and what is missing from the shelf — DONE
+Wishlist, what to look for, extension and contrast findings, the candidate finder with a budget, and dead-end memory.
 
 ### 5b. Gifts — the wishlist pointed outward
 Requested 2026-08-31. Two features that share one hard requirement.
@@ -629,39 +278,157 @@ nothing and works offline but is not roads; real driving directions need an
 API, a key and a proxy, and no free router handles the Islay ferry well.
 Nearest-neighbour ordering is fine for six stops.
 
-### 9. Flight re-instantiation
-A flight as a template, its six bottles as one cast, so Sherry Is Not One
-Thing can run again next year with different pours. The AI builder covers
-part of this — ask for the same variable and it proposes from what is open
-now — but there is no "re-cast this flight" button and no record that run
-two is a second instance of one flight rather than a different flight.
+### 9. Flight re-instantiation — DONE
+Run it again, keeping the variable AND the flight own constraints.
 
----
+### 10. Tasting night
+Split out of item 1, which is otherwise done. Nothing here is built. The
+specification below is BZ's, from early on, and was nearly lost when item 1
+was closed with a one-line summary.
 
-## Small, open
+**BZ is fine with paper for now (2026-09-01), which changes the order.**
+The phone variants were always the expensive half — blind submission, a
+locked column, a synchronised reveal, and every one of them needing shared
+shelves to work with people who are in the room rather than across the
+country. Paper needs none of it.
 
-- Four QA warnings are the checker being conservative and are correct as
-  filed: Baker's High Rye Bourbon, Powers Rye Irish Whiskey, the VDC Goose
-  Island Bourbon County Stout (a stout name, not a bourbon), and Who's Your
-  Daddy? being short, which item 5 would explain properly.
-- 17 bottles are not on the map: the Canadian, Japanese, world and tequila
-  categories have no coordinate set. Four Scotch entries are blenders —
-  Dewar's, Johnnie Walker, Orphan Barrel, Ian Macleod — and correctly have
-  no dot, since a blend has no single place.
-- The `obscurity` field on every bottle was seeded from distillery footprint
-  and marked `seeded`. It has never been corrected by hand, and it drives
-  one whole reel of the tasting machine.
+- Host-only with paper. **The one worth building.** The app prints or shows
+  the flight, the pours in order, and what to write down; the answers live
+  on the card and go in afterwards if they go in at all.
+- Guests scoring blind on their phones. Deferred.
+- A live reveal. Deferred, and pointless without the one above.
 
----
+The post-night summary still stands on its own: whatever gets typed in
+afterwards is enough to say what the room got right.
 
-## Closed
+**The blind column locks on submit.** An answer cannot be changed once
+anyone has seen the reveal. This is the rule the whole thing turns on —
+without it, blind scoring is not blind, and a late edit is invisible.
 
-Scotland map (v0.1.10) · world and US layers (v0.1.13) · home summary
-(v0.1.13) · reference tab and pin counts (v0.1.14) · Shop (v0.1.16) ·
-installable with auto-update (v0.1.17) · split changelog (v0.1.18) · ship
-gate (v0.1.19) · data QA and US coordinates (v0.1.25) · header actions and
-CSV import (v0.1.26) · one continuous map and Irish coordinates (v0.1.29) ·
-AI flight design with local verification (v0.1.30) · clickable charts
-(v0.1.31) · changed-file tracking (v0.1.32) · MadGolf flex-column layout so
-the nav cannot cover content (v0.1.34) · last three US bottlers placed and
-the Montelena and Basil Hayden price corrections (v0.1.35).
+**Post-night summary.** What the room got right, and which pour fooled
+everyone. Today the SMS carries the flight and its snacks, not what
+happened.
+
+Wants shared shelves exercised with a real second person first. That has
+never been done.
+
+### 11. A cap on what a lookup run can spend
+Fill in your shelf calls the API once per bottle on BZ's key. Three hundred
+bottles is a few dollars and fine; a stranger importing a shelf is not.
+Needs a per-user ceiling before anybody outside the three uses it.
+
+### 12. Pooled flights cannot be fully blind
+Raised 2026-09-01, after it was built. Marcus knows what he brought, so a
+flight cast across the room is at best partly blind for whoever supplied
+the pours. This is a real limit, not a bug.
+
+**What it does not affect.** Most of the value is in flights where nothing
+is being guessed: a house comparison, a cask lesson, anything whose point is
+what you learn rather than what you spot. Those lose nothing at all.
+
+**If a pooled flight does need to be blind**, the way tasting clubs handle
+it is to bring MORE than is needed and let the host choose. Marcus brings
+four, two make the cut, and he does not know which — the only thing he knows
+is that some of his might be in there, which is true of the host as well.
+That needs nothing from the app beyond casting from a wider pool than the
+flight uses, so it is a small change if it is ever wanted.
+
+**Not building it yet.** BZ was unsure the pooled flight would get used at
+all. If it is not reached for in three months that is an answer, and it cost
+an hour.
+
+### 13. Paste a shop URL for a verdict — DONE
+Shipped as the third situation, Looking at it on a website. It reads the
+name, proof, age, cask, region, size, price, the bonded, cask-strength and
+single-barrel flags and the shop's own tasting note. Most retailers refuse
+a cross-origin fetch, so pasting the page text is the path that actually
+gets used — and v1.26.2 fixed the name parser, which had been reading a
+pasted page BODY with a function written for a title tag.
+
+### 15. Where a hard bottle can actually be got
+Raised by BZ 2026-09-03. What he does today: search the bottle in Google,
+find the shops that have it, look at the prices, buy it. He uses Hard To
+Find Whiskey, Frootbat and others.
+
+**It is one button.** A Google search with the bottle name already in it,
+on the bottle view and on any `hunt` or `allocated` tag. That returns the
+shops, the prices and the ones he has not found yet. Nothing stored,
+nothing fetched, nothing to keep fresh, nothing that breaks when a shop
+redesigns its site. The only thing the app adds is that the exact name is
+already typed — which is the whole of the work, since the name is the bit
+that is fiddly to get right and the app is holding it.
+
+**Three worse designs were proposed first, and are recorded so they are not
+proposed again.**
+
+1. *Auctions, lotteries, the secondary market.* A different question — how
+   to acquire a trophy — and not what anybody does about a bottle they
+   cannot find.
+2. *OHLQ only.* Reasoned from Ohio being a control state to the conclusion
+   that nothing can ship in. False: licensed out-of-state retailers ship
+   spirits to Ohio and those are the shops he uses. This came from
+   reasoning about the law instead of asking what he does.
+3. *A shop list in Settings, with search URL templates, and a lookup mode
+   that fetches each shop's search page for a price comparison.* Correct
+   in outline and far too much machinery: a per-shop config to maintain,
+   a fetch per shop per bottle to pay for, and a fresh way to break every
+   time one of them changes its markup. Google already does all of it and
+   maintains itself.
+
+**Worth keeping from the OHLQ dig**, since it answers something Google does
+not: Ohio is a control state, so there is one authoritative answer to which
+store near BZ has a bottle right now — per-store stock as full, limited or
+out, updated at 3:30am and again around 11am and 2pm, with an availability
+map per product. Its pages render in the browser, so a plain fetch returns
+an empty document and it can only ever be a link. If a second button is
+ever wanted, that is the one, and it is still just a link.
+
+### 16. Firebase write ceilings
+Raised again 2026-09-03. Every shared node has a rule bounding what may be
+written to it except `upc`, the barcode pairings, which anybody signed in
+may write to without limit. A single script could fill it, and the cost
+lands on this project's account rather than on whoever wrote it.
+
+What the other nodes do that this one does not: bound the payload, bound
+the key, and require the fields to be the shape the app writes. A barcode
+pairing is a code and a name, so the rule is small — a key of digits within
+a plausible length, a value of a name under a hundred characters and a
+timestamp, and nothing else accepted.
+
+Worth doing before the app is shared with anybody outside the current
+circle, and not urgent while it is not.
+
+### 17. The shelf redraws whole, and counts by scanning
+Measured before this session: `renderShelf` is undebounced, so every
+keystroke in the search box rebuilds the entire list, and `ownedCount`
+walks all 345 bottles for each of the 327 products — 111,800 comparisons,
+about 67ms per redraw. Typing a six-letter search runs that six times.
+
+Neither is subtle to fix and neither needs a redesign:
+
+- **Count once, not per product.** One pass over `S.bottles` building a map
+  of key to count, handed to the render, turns 111,800 comparisons into
+  345. This is the whole of the 67ms.
+- **Debounce the search.** A redraw per keystroke is a redraw per keystroke
+  whatever it costs; roughly 150ms of quiet is the usual answer, and the
+  filter chips should still redraw immediately since a tap is a decision
+  rather than a letter.
+
+BZ has deferred this twice, both times correctly — a screen that is
+slightly slow is a smaller problem than a screen that is wrong, and this
+week has been full of screens that were wrong. It is now the largest thing
+left that is neither a feature nor a fault.
+
+### Also worth naming, from the week of 2026-09-03
+Every serious fault this week was the same shape: two functions holding one
+rule, and only one of them taught. parseLookup against cleanFinish. The
+reel help against the reels. needsEnhancing against enhanceDiff. The parse
+against the diff. bottleGaps against needsEnhancing. libraryEntry against
+everything else. In each case both sides had tests and both sides passed,
+because each was tested alone.
+
+The tests that caught these assert the PAIR: what the queue asks about, the
+diff must be able to use; what the parse emits, the diff must be able to
+read; what one screen publishes, another must not immediately queue. That
+is the pattern worth keeping, and it is cheap — every one of those is two
+lines at the end of a section that already exists.
