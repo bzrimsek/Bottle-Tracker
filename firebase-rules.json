@@ -77,7 +77,6 @@
         },
         "shared": {
           ".read": "auth != null",
-          "_comment_stamp": "Admin, like everything else under shared. stamp is what every client watches to decide the library has changed, so a plain signed-in account could write it in a loop and make every device re-download the whole catalogue. Only an admin can change anything it announces.",
           "stamp": {
             ".write": "auth != null && root.child('bz-apps/whisky/admins').child(auth.uid).exists()"
           },
@@ -117,13 +116,33 @@
           ".read": "auth != null && root.child('bz-apps/whisky/admins').child(auth.uid).exists()",
           "$uid": {
             ".write": "auth != null && ($uid === auth.uid || root.child('bz-apps/whisky/admins').child(auth.uid).exists())",
-            ".read": "auth != null && $uid === auth.uid"
+            ".read": "auth != null && $uid === auth.uid",
+            "upc": {
+              "$key": {
+                ".validate": "$key.matches(/^[0-9]{12}$/) && newData.hasChildren(['name','at'])",
+                "name": {
+                  ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 100"
+                },
+                "at": {
+                  ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= now + 60000"
+                },
+                "price": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000"
+                },
+                "size": {
+                  ".validate": "newData.isString() && newData.val().length <= 20"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            }
           }
         },
         "upc": {
           ".read": "auth != null",
           "$key": {
-            ".write": "auth != null && (!data.exists() || root.child('bz-apps/whisky/admins').child(auth.uid).exists())",
+            ".write": "auth != null && root.child('bz-apps/whisky/admins').child(auth.uid).exists()",
             ".validate": "$key.matches(/^[0-9]{12}$/) && newData.hasChildren(['name','at'])",
             "name": {
               ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 100"

@@ -23,12 +23,20 @@ being stored, and it does not stop volume. Twelve digits is a trillion
 possible keys and a determined account could still fill them one valid row
 at a time. Realtime Database rules cannot express a rate limit.
 
-If the circle grows past people BZ knows, the answer is to route a learned
-pairing through `contrib` — which is already per-account and already
-reviewed — instead of writing the shared node directly. That makes the
-shared node admin-write-only, exactly like the library, and keeps the
-teach-it-once property at the cost of a pairing not being shared until it
-has been looked at. Not worth the review burden today.
+DONE 2026-09-04. A learned pairing now goes to `contrib`, which is already
+per-account and already reviewed, and `upc/$key` is admin-write-only like
+the library. An admin still writes straight through, because a review step
+where the reviewer is the author is a ceremony rather than a check. The
+teach-it-once property is kept: the pairing is stored locally either way and
+works offline immediately, it just is not shared until somebody looks at it.
+Barcodes offered appears on the Library screen beside the products, with
+Accept and Decline. Two people scanning the same bottle before either is
+reviewed shows once, earliest offer winning. `contrib/$uid/upc` is bounded
+to the same shape as the shared node, so nothing can be offered that could
+not then be accepted.
+
+**REQUIRES A CONSOLE PASTE.** firebase-rules.json changed and does not
+deploy with the app.
 
 **Nothing else is unbounded.** Checked the whole file on 2026-09-03:
 directory, requests, shares, sharedWith, shared, view, admins, stats and
@@ -36,21 +44,34 @@ contrib all bound both who may write and what shape it must be.
 
 ## 2. Performance
 
-**The shelf redraws whole, and counts by scanning.** `ownedCount` walks all
-345 bottles for each of 327 products — 111,800 comparisons, about 67ms per
-redraw — and `renderShelf` is undebounced, so a six-letter search runs that
-six times. Neither needs a redesign. One pass over `S.bottles` building a
-key-to-count map turns 111,800 comparisons into 345, and that is essentially
-the whole 67ms; a debounce of roughly 150ms handles the rest, with the
-filter chips still redrawing immediately, since a tap is a decision and a
-letter is not.
+**The shelf redraws whole, and counts by scanning.** — DONE 2026-09-04.
+`L.ownedCounts` builds the key-to-count map in one pass and the search box
+is debounced at 150ms, with the filter chips still redrawing immediately.
 
-**Logic that ships untested**, which belongs with this because it is the
-same edit. `openSealed`, `publishBatch` and `pendingForLibrary` compute
-inside render functions, so the harness cannot reach what they compute.
-Rule 30 exists because of this, and the week of 2026-09-03 is the argument
-for it: every serious fault was in code the tests could not see, or could
-see only one half of.
+What was still open on 2026-09-04 was the same fault in newer code: the
+recommender, the portrait and the shape chart each filtered the whole
+catalogue with a per-product `ownedCount`, which is the 111,800-comparison
+shape again. `shelfAxes` was worse — it re-split every finish string once
+per wood family and re-ran the peat match once per level, six and four full
+passes for facts that do not change between them. Measured on BZ's 325
+products and 344 bottles: tasteProfile 8.20ms to 4.33, shelfAxes 5.13 to
+2.57, shelfGaps 14.08 to 12.44, and Home as a whole from about 15ms to 4.
+Roughly ten times that on his phone. 2051 assertions unchanged, which is
+the point: same answers, less work.
+
+Still worth doing when it next matters: `shelfGaps` is 12ms and now the
+slowest thing on the planning screen.
+
+**Logic that ships untested** — DONE, and this entry was stale when it was
+read on 2026-09-04. All three named here already delegate: `openSealed` to
+`L.sealedPrompt`, `publishBatch` to `L.publishWrite`, and
+`pendingForLibrary` to `L.pendingForLibrary`. Checked rather than assumed.
+
+The rule still earned its keep the same day. Eleven more computations came
+out of `renderShelf` and `renderShop` (§226, §227), and the ReferenceError
+that had sat in `renderShop` through fourteen versions was exactly what
+rule 30 predicts: the harness cannot call a render function, so anything
+computed inside one ships untested however much of it is arithmetic.
 
 ## 3. Finding the bottle
 
@@ -129,6 +150,89 @@ What has to be decided before building it:
 Blocked on nothing technically. Worth doing after a second person is
 actually using the app, since half of what makes it fun does not exist for
 one user.
+
+### Fill the library's gaps in bulk — DONE 2026-09-04
+Built as specified below. `L.planLibraryFill` decides what to ask about and
+what to skip in one pass, so the bill somebody approves is the same list
+that runs. The count is a filter that composes with the type and the
+search. The run reuses `askLookup` and the five-consecutive-error breaker,
+and nothing is written until a review screen has been through it — named,
+additive writes that never overrule a field the library already holds.
+
+`L.recordLookup` is the ledger, keyed by product: two clean empty answers
+stop a bottle being asked about, a hit wipes the doubt, an ERROR counts
+against nothing, and a miss ages out after 90 days. It merges on sync, so
+two admins filling from different devices share what each learned.
+
+What is NOT done: the cost estimate is a count of lookups, not money. The
+run says how many it will do and how many it skipped; it does not know what
+a lookup costs. That is still item 11, and it now has one more caller.
+
+Original entry follows.
+
+### Fill the library's gaps in bulk
+BZ, 2026-09-04, looking at "331 whiskies, 54 missing something": "where do
+I run the library bulk update?" There is no such thing, and that is the
+finding. The 54 are reachable only one at a time — tap a row carrying `!`,
+read what it is short of, open the editor, repeat.
+
+Two tools exist and neither does this:
+- **Publish N to the library** pushes fields YOUR shelf already holds that
+  the library lacks. It cannot fill a hole nobody has the answer to, which
+  is why it can be absent while 54 entries are thin.
+- **The enrichment run** works on your own shelf, not on library entries.
+
+What to build, admin-only:
+1. Make the count a filter. "54 missing something" should be tappable and
+   show only those rows; right now it is a number with no way into it,
+   which is the same fault as a chart you cannot drill.
+2. A **Fill the 54** run against the lookup service, reusing what the shelf
+   enrichment already learned the hard way: the circuit breaker after five
+   consecutive errors, the identity gate, and parseLookup keeping the four
+   sensory fields.
+3. A review step before anything is written. `publishBatch` is the model —
+   named writes only, never replacing the node, so a correction somebody
+   else made is not destroyed.
+4. A cost estimate before the run and a total after it. 54 lookups is real
+   money and the budget item (item 11) is still open for the shelf run;
+   build it once here and use it in both.
+5. **Never pay for the same miss twice.** BZ, same conversation: "we also
+   want to make sure we don't try the same bottle over and over and spend
+   the money." A library entry that comes back with nothing is not a
+   transient failure — an obscure bottling nobody has written up is still
+   unwritten next week, and a run that re-asks all 54 every time pays for
+   the misses for ever.
+
+   The pattern already exists twice and must not be written a third time:
+   `L.recordAsk` / `L.askScore` keep an ok/no tally per ask and sink the
+   ones that keep coming back empty, and `deadGaps` removes the
+   proven-impossible outright. Both key off `L.gapKey`. The library needs
+   the same shape keyed by product: what was asked, when, and what came
+   back, so a second run skips a known miss and says how many it skipped
+   rather than silently doing less.
+
+   Two rules that fell out of the shelf run and apply here unchanged. An
+   error is not a miss: credits running out and a model timing out both
+   look like "nothing found" and neither is evidence about the bottle, so
+   only a clean empty answer counts as a no. And a miss is not permanent —
+   the library grows, so a skipped entry needs a way back in, either an
+   age-out or an explicit "try the skipped ones again".
+
+`L.libraryGaps` already defines thin: no proof, no distillery, no category,
+or notes that are absent or came off a flight card. That definition is the
+spec — do not write a second one.
+
+### An admin with an empty queue cannot tell they are an admin
+Same session. The library screen shows "Offered to the library — Nothing
+waiting" and, when nothing on the shelf differs from the library, no admin
+buttons at all. BZ read that as lost permissions and went to the Firebase
+console to check; his uid was correctly under `bz-apps/whisky/admins` the
+whole time. An empty queue and a missing feature look identical.
+
+The fix is a line, not a feature: say on the library screen that you are an
+admin and what would appear here when there is work. v1.6.21 made the
+failing case say why in Diagnostics; the succeeding-but-idle case still
+says nothing.
 
 ## Not looked at
 

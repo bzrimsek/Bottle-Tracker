@@ -4988,18 +4988,32 @@ sec('§198 a host line stays with its pour');
  */
 sec('§199 a typed name is cased like the shelf');
 {
+  /* "to" stays small in the middle, which is how this bottle is actually
+     written on the shelf: "Heaven Hill Grain to Glass Straight Bourbon
+     Whiskey". The old expectation capitalised it, because typedName ran
+     L.titleCase — the shelf LABEL caser — over every save, and that
+     rewrote 27 of 325 real names the moment anybody pressed Save changes.
+     A name at either end is never made small. */
   eq('the bottle that started it',
     L.typedName('heaven hill grain to glass wheated bourbon'),
-    'Heaven Hill Grain To Glass Wheated Bourbon');
+    'Heaven Hill Grain to Glass Wheated Bourbon');
+  /* Typed with intent, so left completely alone — the whole rule. */
+  eq('a name that carries case is not touched',
+    L.typedName('Ardbeg Anthology The Harpy\u2019s Tale'),
+    'Ardbeg Anthology The Harpy\u2019s Tale');
+  eq('nor is one with an initialism',
+    L.typedName('Colonel E.H. Taylor Barrel Proof'),
+    'Colonel E.H. Taylor Barrel Proof');
   eq('spacing collapses', L.typedName("  angel's   envy  "), "Angel's Envy");
   eq('a possessive keeps its small s',
     L.typedName("angel's envy single barrel"), "Angel's Envy Single Barrel");
   eq('a one-letter prefix does not',
     L.typedName("aberlour a'bunadh alba"), "Aberlour A'Bunadh Alba");
   eq('and neither does the Irish one', L.titleCase("o'connell"), "O'Connell");
+  /* Mc takes its second capital now, which Mckenna did not. */
   eq('a hyphen starts a word',
     L.typedName('henry mckenna 10 year bottled-in-bond'),
-    'Henry Mckenna 10 Year Bottled-In-Bond');
+    'Henry McKenna 10 Year Bottled-In-Bond');
   eq('an interior capital is left alone', L.titleCase('McKenna'), 'McKenna');
 
   /* NOT cleanName. The longest name on the shipped shelf is 101 characters;
@@ -5581,7 +5595,7 @@ sec('§208 renaming a library entry');
     'heaven hill grain to glass wheated bourbon');
   eq('a case fix is allowed', cased.ok, true);
   eq('and cased like the rest of the shelf', cased.name,
-    'Heaven Hill Grain To Glass Wheated Bourbon');
+    'Heaven Hill Grain to Glass Wheated Bourbon');
   eq('and does not move the entry', cased.moved, false);
   eq('because the key is the same either way', cased.key, key);
 
@@ -5907,10 +5921,18 @@ sec('§212 writing one entry of a map');
   eq('a record that will not parse does not throw',
     L.mapDelta('edits', after, '{oops'), null);
 
-  // Every map key named is one Firebase actually holds as a map.
-  eq('the map keys are all sync keys',
-    L.MAP_KEYS.filter(k => ['edits', 'custom', 'deleted', 'favs', 'deadGaps',
-      'upcs'].indexOf(k) < 0), []);
+  /* Every map key must also be a key that MERGES on sync, or a delta could
+     be written for something a remote copy replaces wholesale.
+
+     This used to restate the list of map keys, so it could only ever fail
+     when a new one was added — which it did, on libLedger, a key that is
+     both a map and merged and therefore entirely correct. It checks the
+     invariant now instead of the inventory. `deleted` is the exception it
+     has always been: a map that is replaced rather than merged, because a
+     bottle you removed coming back is worse than one going missing. */
+  eq('every map key merges rather than being replaced',
+    L.MAP_KEYS.filter(k => k !== 'deleted'
+      && L.SYNC_MERGE.indexOf(k) < 0), []);
 }
 
 /* §213  removing a run, and not logging one twice ---------------------
@@ -7010,9 +7032,27 @@ sec('§229 books on a shelf');
   eq('but never below the floor', asm.size >= 8.5, true);
   eq('and never above the ceiling', bourbon.size <= 11, true);
 
-  /* The label is the full name. L.titleCase drops stop words, which is
-     right for a shelf label and printed "American Malt" on the spine. */
-  eq('the spine carries the whole name', asm.label, 'American Single Malt');
+  /* One label, used by the books AND the By type chart, which now sit on
+     the same screen. They disagreed: the spine said American Single Malt
+     and the bar said American Malt, from the same `sub`. L.titleCase
+     abbreviates on purpose — it is the caser for a narrow filter chip. */
+  /* One label everywhere. The books and the By type chart sit on the same
+     screen and disagreed — the spine said American Single Malt while the
+     bar said American Malt, because L.titleCase abbreviates for a chip.
+     ASM is what the trade calls it, so ASM is the label in both. */
+  eq('the spine uses the trade name', asm.label, 'ASM');
+  eq('and the chart uses the same one',
+    L.typeLabel('american single malt'), 'ASM');
+  eq('a type with no short form keeps its full name',
+    L.typeLabel('tennessee'), 'Tennessee');
+  eq('and is not abbreviated the way a chip is',
+    L.typeLabel('flavored'), 'Flavored');
+  eq('and the chart uses the same one',
+    L.typeLabel('american single malt'), asm.label);
+  eq('spelling is not changed either',
+    L.typeLabel('flavored'), 'Flavored');
+  eq('a one-word type is capitalised', L.typeLabel('bourbon'), 'Bourbon');
+  eq('nothing is nothing', L.typeLabel(''), '');
   eq('capitalised', bourbon.label, 'Bourbon');
 
   /* Banding, on the five counts worked out above. */
@@ -7469,6 +7509,360 @@ sec('§233 six axes, no total');
   eq('and starts with a move', /^M/.test(L.radarPath(pts)), true);
   eq('no points is no path', L.radarPath([]), '');
   eq('no axes is no points', L.radarPoints([], 100).length, 0);
+}
+
+/* §234  a barcode pairing is offered, not published -------------------
+ *
+ * Backlog item 1. The shared `upc` node was the one place any signed-in
+ * account could write a row nobody reviewed. The rules bound the SHAPE,
+ * and Realtime Database rules cannot express a rate limit, so twelve
+ * digits is a trillion keys somebody could fill one valid row at a time.
+ *
+ * Pairings now go to contrib, which is already per-account and already
+ * reviewed, and `upc` is admin-write-only like the library.
+ */
+sec('§234 barcodes are offered for review');
+{
+  const target = L.upcWriteTarget(false, 'u1', '012345678905');
+  eq('a normal account offers rather than publishes',
+    target.path, 'bz-apps/whisky/contrib/u1/upc/012345678905');
+  eq('and it is marked unreviewed', target.reviewed, false);
+
+  /* An admin writes through. A review step where the reviewer is the
+     author is a ceremony, not a check. */
+  const adm = L.upcWriteTarget(true, 'u1', '012345678905');
+  eq('an admin writes straight to the shared node',
+    adm.path, 'bz-apps/whisky/upc/012345678905');
+  eq('and it needs no review', adm.reviewed, true);
+  eq('no key is no target', L.upcWriteTarget(false, 'u1', null), null);
+
+  /* The row. Bounded here as well as in the rules, so nothing can be
+     offered that could not then be accepted. */
+  const row = L.upcRow('  Ardbeg 10  ', { price: 55, size: '750ml' }, 1000);
+  eq('the name is trimmed', row.name, 'Ardbeg 10');
+  eq('the clock is the caller\u2019s', row.at, 1000);
+  eq('a price comes along', row.price, 55);
+  eq('so does a size', row.size, '750ml');
+  eq('an empty name is not a pairing', L.upcRow('   ', {}, 1), null);
+  eq('a long name is cut to what the rules allow',
+    L.upcRow('x'.repeat(200), {}, 1).name.length, 100);
+  eq('a long size too', L.upcRow('a', { size: 's'.repeat(50) }, 1).size.length,
+    20);
+  eq('a price that is not a number is dropped',
+    L.upcRow('a', { price: 'free' }, 1).price, undefined);
+  eq('a negative price is dropped',
+    L.upcRow('a', { price: -5 }, 1).price, undefined);
+  eq('zero is a real price and is kept',
+    L.upcRow('a', { price: 0 }, 1).price, 0);
+
+  /* What an admin sees waiting. */
+  const contrib = {
+    u1: { upc: { '000000000001': { name: 'Ardbeg 10', at: 200 },
+                 '000000000002': { name: 'Lagavulin 16', at: 100 } } },
+    u2: { upc: { '000000000001': { name: 'Ardbeg Ten', at: 300 },
+                 '000000000003': { name: 'Already Shared', at: 50 } } },
+    u3: { 'some-product-slug': { name: 'not a barcode' } }
+  };
+  const known = { '000000000003': { name: 'Already Shared' } };
+  const pend = L.pendingUpcs(contrib, known);
+
+  eq('a pairing already shared is not waiting', pend.length, 2);
+  eq('the one waiting longest leads', pend[0].key, '000000000002');
+  /* Two people can scan the same bottle before either is looked at. The
+     earliest offer wins, because it is the one that has been waiting. */
+  eq('a key offered twice appears once',
+    pend.filter(x => x.key === '000000000001').length, 1);
+  eq('and it is the earlier offer', pend[1].name, 'Ardbeg 10');
+  eq('carrying who offered it', pend[1].uid, 'u1');
+  eq('a product offer is not mistaken for a barcode',
+    pend.some(x => x.name === 'not a barcode'), false);
+  eq('a row with no name is not offerable',
+    L.pendingUpcs({ u1: { upc: { '000000000009': { at: 1 } } } }, {}).length, 0);
+  eq('nothing offered is not an error', L.pendingUpcs({}, {}).length, 0);
+  eq('a missing contrib is not an error', L.pendingUpcs(null, null).length, 0);
+}
+
+/* §235  never pay for the same miss twice ----------------------------
+ *
+ * BZ: "we also want to make sure we don't try the same bottle over and
+ * over and spend the money." Two rules, both learned the hard way on the
+ * shelf run, and both asserted here because both cost real money when they
+ * are wrong.
+ */
+sec('§235 what is worth looking up twice');
+{
+  const today = '2026-09-04';
+
+  eq('a bottle never asked about is asked about',
+    L.shouldLookUp({}, 'a', today), true);
+
+  /* One empty answer is bad luck; two is a pattern. */
+  let led = L.recordLookup({}, 'a', 'empty', today);
+  eq('one miss is not enough to stop asking',
+    L.shouldLookUp(led, 'a', today), true);
+  led = L.recordLookup(led, 'a', 'empty', today);
+  eq('two is', L.shouldLookUp(led, 'a', today), false);
+  eq('and the misses are counted', led.a.no, 2);
+
+  /* AN ERROR IS NOT A MISS. Credits running out and a model timing out
+     both look like "nothing found" and neither is evidence about the
+     bottle. A bad afternoon must not blacklist half the library. */
+  let err = L.recordLookup({}, 'b', 'error', today);
+  err = L.recordLookup(err, 'b', 'error', today);
+  err = L.recordLookup(err, 'b', 'error', today);
+  eq('three errors leave no record at all', err.b, undefined);
+  eq('so the bottle is still worth asking about',
+    L.shouldLookUp(err, 'b', today), true);
+
+  /* A hit clears the doubt outright — the bottle is findable after all. */
+  let mixed = L.recordLookup({}, 'c', 'empty', today);
+  mixed = L.recordLookup(mixed, 'c', 'empty', today);
+  eq('two misses stop it', L.shouldLookUp(mixed, 'c', today), false);
+  mixed = L.recordLookup(mixed, 'c', 'found', today);
+  eq('a hit wipes the misses', mixed.c.no, 0);
+  eq('and it is asked about again', L.shouldLookUp(mixed, 'c', today), true);
+
+  /* A MISS IS NOT PERMANENT. The library grows and sources appear. */
+  const old = { d: { ok: 0, no: 5, at: '2026-01-01' } };
+  eq('an old miss is worth one more try',
+    L.shouldLookUp(old, 'd', today), true);
+  const recent = { e: { ok: 0, no: 5, at: '2026-09-01' } };
+  eq('a recent one is not', L.shouldLookUp(recent, 'e', today), false);
+  eq('the gap is counted in days',
+    L.lookupDaysSince('2026-09-01', '2026-09-04'), 3);
+  eq('a missing date is not a date', L.lookupDaysSince(null, today), null);
+  /* A record we cannot read is not a licence to blacklist. */
+  eq('an unreadable date means ask again',
+    L.shouldLookUp({ f: { ok: 0, no: 9, at: 'whenever' } }, 'f', today), true);
+
+  /* The plan is the estimate AND the work, so the number approved and the
+     number run cannot disagree. */
+  const products = [
+    { k: 'p1', name: 'Thin One', proof: null, dist: 'H', sub: 'bourbon' },
+    { k: 'p2', name: 'Thin Two', proof: 90, dist: null, sub: 'bourbon' },
+    { k: 'p3', name: 'Complete', proof: 90, dist: 'H', sub: 'bourbon',
+      tn: { nose: 'something' } },
+    { k: 'p4', name: 'Known Miss', proof: null, dist: 'H', sub: 'bourbon' }
+  ];
+  const ledger = { p4: { ok: 0, no: 2, at: today } };
+  const plan = L.planLibraryFill(products, ledger, today);
+  eq('a complete entry is not in the plan at all', plan.thin, 3);
+  eq('a known miss is skipped, not asked', plan.ask.length, 2);
+  eq('and it is counted as skipped', plan.skip.length, 1);
+  eq('the skipped one is named', plan.skip[0].k, 'p4');
+  eq('every entry to ask about says what it is short of',
+    plan.ask.every(x => x.missing.length > 0), true);
+  eq('the emptiest entries lead',
+    plan.ask[0].missing.length >= plan.ask[1].missing.length, true);
+  eq('an empty library plans nothing',
+    L.planLibraryFill([], {}, today).ask.length, 0);
+  eq('a missing library is not an error',
+    L.planLibraryFill(null, null, today).thin, 0);
+}
+
+/* §236  case is tidied only where none was given ----------------------
+ *
+ * BZ asked whether bottle names could always be stored title case, and
+ * notes sentence case, for consistency. The shelf answered it: of 325
+ * names and every distillery, not one is in all capitals and not one is in
+ * all lower case, and only 9 of 930 tasting notes begin small. There was
+ * nothing to migrate — and running title case over what is there would
+ * have DAMAGED 37 of the 325.
+ *
+ * Worse, it was already happening. L.typedName ran L.titleCase on every
+ * save, and L.titleCase is the shelf LABEL caser: it lower-cases small
+ * words wherever they fall and expands its own abbreviations. Opening any
+ * of 27 bottles and pressing Save changes corrupted the name.
+ *
+ * So the test is whether the text carries case at all. Both capitals and
+ * small letters means somebody meant it; ALL CAPS or all lower means
+ * nothing was said, and only then is anything decided.
+ */
+sec('§236 tidying only what carries no case');
+{
+  eq('a mixed-case name says something', L.carriesCase('Ardbeg Ten'), true);
+  eq('all capitals says nothing', L.carriesCase('ARDBEG TEN'), false);
+  eq('all lower says nothing', L.carriesCase('ardbeg ten'), false);
+  eq('digits alone say nothing', L.carriesCase('1792'), false);
+
+  /* Left alone, every one of these. This is the half that matters: each is
+     a real shelf name that naive title case mangles. */
+  [['Aberlour A\u2019Bunadh Alba'],
+   ['Colonel E.H. Taylor Barrel Proof'],
+   ['Barrell Bourbon Cask Finish Series: PX Sherry'],
+   ['Bunnahabhain F\u00e8is \u00ccle 2023 Canasta Cask Matured'],
+   ['Angel\u2019s Envy Bourbon Finished in Port Wine Barrels'],
+   ['Four Roses Single Barrel Barrel Strength OBSV'],
+   ['Henry Mckenna 10 Year Bottled-In-Bond'],
+   ['10th Street Triple Cask Str Single Malt'],
+   ['Heaven Hill Grain to Glass Straight Bourbon Whiskey 1st Edition'],
+   ['Ardbeg Anthology The Harpy\u2019s Tale 13 Year Single Malt Scotch']
+  ].forEach(([n]) => {
+    eq('untouched: ' + n.slice(0, 34), L.tidyName(n), n);
+  });
+
+  /* Decided, where nothing was said. */
+  eq('all capitals get a name back', L.tidyName('ARDBEG TEN'), 'Ardbeg Ten');
+  eq('a one-letter prefix takes its capital',
+    L.tidyName("aberlour a'bunadh"), "Aberlour A'Bunadh");
+  eq('a possessive does not', L.tidyName("angel's envy"), "Angel's Envy");
+  eq('an initialism written with stops is restored',
+    L.tidyName('colonel e.h. taylor'), 'Colonel E.H. Taylor');
+  eq('Mc takes a second capital',
+    L.tidyName('henry mckenna'), 'Henry McKenna');
+  eq('a hyphen starts a word inside one',
+    L.tidyName('bottled-in-bond'), 'Bottled-In-Bond');
+  eq('a small word stays small in the middle',
+    L.tidyName("angel's envy finished in port"),
+    "Angel's Envy Finished in Port");
+  /* Never at either end: "The Macallan" is not "the Macallan". */
+  eq('but not at the front', L.tidyName('the macallan 12'), 'The Macallan 12');
+  /* Nor at the back: "the" is the last word here and keeps its capital,
+     while "from" sits in the middle and does not. */
+  eq('nor at the back', L.tidyName('straight from the'), 'Straight from The');
+  eq('a number keeps its shape', L.tidyName('1792 small batch'),
+    '1792 Small Batch');
+  eq('and so does an ordinal', L.tidyName('10th street'), '10th Street');
+  /* The label caser abbreviates on purpose; a bottle name must not. */
+  eq('a name is not abbreviated the way a chip is',
+    L.tidyName('american single malt'), 'American Single Malt');
+  eq('nothing is nothing', L.tidyName(''), '');
+  eq('and neither is a space', L.tidyName('   '), '');
+
+  /* Notes: the same test, sentence case rather than title. */
+  eq('a note that carries case is left alone',
+    L.tidyNote('Sherry-forward, with Christmas cake'),
+    'Sherry-forward, with Christmas cake');
+  eq('a shouted note is calmed',
+    L.tidyNote('NOSE OF DRIED FRUIT. LONG FINISH.'),
+    'Nose of dried fruit. Long finish.');
+  eq('a hurried one gets its capitals',
+    L.tidyNote('honey and orchard fruit. gentle spice.'),
+    'Honey and orchard fruit. Gentle spice.');
+  eq('every sentence, not just the first',
+    L.tidyNote('one. two. three.'), 'One. Two. Three.');
+  eq('a question mark starts a sentence too',
+    L.tidyNote('sherry? maybe.'), 'Sherry? Maybe.');
+  eq('an empty note stays empty', L.tidyNote(''), '');
+
+  /* And the guarantee, stated as an assertion: saving does not rewrite a
+     name that was typed properly. This is what was broken. */
+  ['Ardbeg Anthology The Harpy\u2019s Tale', 'Glenmorangie The Lasanta',
+   'Blanton\u2019s Straight From The Barrel', 'Benriach The Smoky Ten'
+  ].forEach(n => {
+    eq('save leaves it alone: ' + n.slice(0, 28), L.typedName(n), n);
+  });
+}
+
+/* §237  what you buy against what you drink --------------------------
+ *
+ * The portrait reads the shelf, which is a record of purchases. The log is
+ * a record of choices, and a shelf can say PX Lover on nineteen bottles
+ * while every evening goes to Islay.
+ *
+ * Worked out by hand before the assertions. Six whiskies:
+ *   A owned 2 poured 4 | B owned 2 poured 0 | C owned 1 poured 5
+ *   D owned 1 poured 0 | E owned 2 poured 1 | F owned 1 poured 3
+ * Poured values above zero are 1,3,4,5; the median of four is the third,
+ * so the line is 4 and "often" means four or more.
+ *   A again+often  staples      B again+rarely stockpile (and a trophy)
+ *   C once+often   discoveries  D once+rarely  tail
+ *   E again+rarely stockpile    F once+rarely  tail (3 is below 4)
+ */
+sec('§237 the buy-against-drink quadrants');
+{
+  const cat = {}, bottles = [], hist = [];
+  const add = (k, owned, poured) => {
+    cat[k] = { k: k, name: k, sub: 'bourbon' };
+    for (let i = 0; i < owned; i++) bottles.push({ k: k, status: 'open' });
+    for (let i = 0; i < poured; i++) hist.push({ kind: 'pour', pours: [k] });
+  };
+  add('A', 2, 4); add('B', 2, 0); add('C', 1, 5);
+  add('D', 1, 0); add('E', 2, 1); add('F', 1, 3);
+
+  const q = L.buyVsDrink(cat, bottles, [], hist);
+  eq('the line is the shelf\u2019s own middle', q.line, 4);
+  eq('six whiskies counted', q.counted, 6);
+  eq('four of them have ever been poured', q.pouredAny, 4);
+
+  eq('bought again and poured often is a staple', q.staples.length, 1);
+  eq('and it is the right one', q.staples[0].k, 'A');
+  eq('bought again and poured rarely is stockpile', q.stockpile.length, 2);
+  eq('bought once and poured often is a discovery', q.discoveries.length, 1);
+  eq('and it is the right one', q.discoveries[0].k, 'C');
+  eq('the rest are the long tail', q.tail.length, 2);
+  /* Three pours is below a line of four, so F is tail and not a
+     discovery. The line is a median, not a guess. */
+  eq('a whisky just under the line is not often-poured',
+    q.tail.some(r => r.k === 'F'), true);
+
+  /* Every whisky lands in exactly one quadrant, or the picture lies. */
+  const all = q.staples.concat(q.stockpile, q.discoveries, q.tail);
+  eq('every whisky is in exactly one quadrant', all.length, q.counted);
+  eq('and none of them twice', new Set(all.map(r => r.k)).size, q.counted);
+
+  /* The sharp one: bought twice, never poured once. */
+  eq('one bottle was bought again and never opened', q.trophies.length, 1);
+  eq('and it is the one', q.trophies[0].k, 'B');
+  eq('a trophy is also in the stockpile',
+    q.stockpile.some(r => r.k === 'B'), true);
+
+  /* A shelf with no log at all: every whisky falls in one corner, which is
+     why the card does not draw. */
+  const none = L.buyVsDrink(cat, bottles, [], []);
+  eq('nothing poured means nothing has been chosen', none.pouredAny, 0);
+  eq('so every whisky is bought-rarely',
+    none.staples.length + none.discoveries.length, 0);
+
+  eq('an empty shelf has no quadrants', L.buyVsDrink({}, [], [], []), null);
+  eq('a gone bottle is not owned',
+    L.buyVsDrink(cat, bottles.map(b => ({ k: b.k, status: 'gone' })), [], hist),
+    null);
+}
+
+/* §238  a flight you could pour tonight ------------------------------
+ *
+ * The only suggestion in the app that costs nothing. On BZ's shelf 34 of
+ * 36 flights are already runnable, because 325 of his 344 bottles are
+ * marked open — so what is POSSIBLE says nothing and the ordering is the
+ * whole feature: never run first, then longest since.
+ */
+sec('§238 what you could pour tonight');
+{
+  const cat = { a: { k: 'a', name: 'A' }, b: { k: 'b', name: 'B' },
+                c: { k: 'c', name: 'C' } };
+  const bottles = [{ k: 'a', status: 'open' }, { k: 'b', status: 'open' }];
+  const flights = [
+    { title: 'READY NEVER RUN', core: [{ k: 'a' }, { k: 'b' }] },
+    { title: 'READY RAN ONCE', core: [{ k: 'a' }, { k: 'b' }] },
+    { title: 'SHORT A BOTTLE', core: [{ k: 'a' }, { k: 'c' }] },
+    { title: 'NO POURS AT ALL', core: [] }
+  ];
+  const hist = [{ kind: 'flight', flight: 'READY RAN ONCE', at: '2026-08-01' }];
+
+  const t = L.tonight(flights, cat, bottles, hist);
+  eq('only complete flights are offered', t.length, 2);
+  eq('a flight missing a bottle is not one', 
+    t.some(f => f.title === 'SHORT A BOTTLE'), false);
+  eq('nor is an empty design',
+    t.some(f => f.title === 'NO POURS AT ALL'), false);
+  eq('the one never run leads', t[0].title, 'READY NEVER RUN');
+  eq('and says so', t[0].lastRun, null);
+  eq('the one already run follows', t[1].title, 'READY RAN ONCE');
+  eq('carrying when', t[1].lastRun, '2026-08-01');
+  eq('each says how many pours', t[0].pours, 2);
+
+  /* Two run before: the older one comes first, because a flight poured
+     last week is a worse evening than one poured last year. */
+  const older = [{ kind: 'flight', flight: 'READY NEVER RUN', at: '2025-01-01' },
+                 { kind: 'flight', flight: 'READY RAN ONCE', at: '2026-08-01' }];
+  const t2 = L.tonight(flights, cat, bottles, older);
+  eq('longest since leads when both have run', t2[0].title, 'READY NEVER RUN');
+
+  eq('the limit is honoured', L.tonight(flights, cat, bottles, hist, 1).length, 1);
+  eq('no flights is not an error', L.tonight([], cat, bottles, hist).length, 0);
+  eq('a shelf with nothing open offers nothing',
+    L.tonight(flights, cat, [], hist).length, 0);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

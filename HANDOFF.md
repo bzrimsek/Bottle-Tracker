@@ -172,6 +172,35 @@ something that already existed.
 
 ---
 
+## 5b. Where this session ended — 2026-09-04
+
+Shipped v1.6.21, gate green, 2051 assertions. What went in: the affinity
+recommender and the wood taxonomy, the shelf portrait and the six-axis
+shape with its roadmap, books on the shelf, the sealed fix, and the
+renderAxis restoration.
+
+**Two faults reported on BZ's device that were never reproduced here.** Say
+so plainly rather than assuming they went away:
+
+1. **The nav tabs vanish on his Pixel 10 Pro, Chrome, installed PWA.** Not
+   reproducible at 390x700, 412x915, with emulated safe-area insets, on any
+   of the seven screens, or scrolled to the bottom of Home — nav computes
+   to the viewport floor every time. The layout is right in a desktop
+   engine, so it is something the device does. The discriminating question,
+   still unanswered: do the tabs come back on a tab-switch or a rotate, or
+   are they gone for the session?
+2. **The Library admin gear.** There is no gear on that screen and never
+   was — the admin controls are inline buttons gated on there being work to
+   do. His uid IS an admin. Filed as its own backlog item.
+
+**Process, for whoever reads this next.** Several turns this session
+returned empty and at least three of them ran commands that were never
+reported. That is where the phantom v1.6.15 entry and a stray v1.6.20 lock
+pair came from. Nothing shipped from those turns and the delivered lock
+matches index.html byte for byte, but if something in the file looks
+unaccounted for, that is the likeliest explanation. Check CHANGELOG.md
+against the header block before trusting either.
+
 ## 6. Open, in priority order
 
 **Needs BZ, not code**
