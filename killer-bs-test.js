@@ -6333,5 +6333,104 @@ sec('§219 an ask is ranked by what it has produced');
     ['Another Arran', 'A rye worth owning']);
 }
 
+/* §220  what you drink against what you own ---------------------------
+ *
+ * 344 bottles and a pour log, and nothing had ever compared them. The
+ * shelf says what was bought; the log says what gets reached for, and the
+ * difference is the most interesting thing the app was sitting on.
+ *
+ * It matters for buying: a category owned deeply and poured rarely is not
+ * a gap however thin it looks beside something else.
+ */
+sec('§220 the shelf against the log');
+{
+  const cat = {
+    b1: { k: 'b1', name: 'B1', sub: 'bourbon' },
+    b2: { k: 'b2', name: 'B2', sub: 'bourbon' },
+    s1: { k: 's1', name: 'S1', sub: 'scotch' },
+    s2: { k: 's2', name: 'S2', sub: 'scotch' },
+    s3: { k: 's3', name: 'S3', sub: 'scotch' }
+  };
+  // Two bourbons, three Scotches: 40% and 60% of the shelf.
+  const bottles = [{ id: 'B1', k: 'b1', status: 'open' },
+                   { id: 'B2', k: 'b2', status: 'open' },
+                   { id: 'B3', k: 's1', status: 'open' },
+                   { id: 'B4', k: 's2', status: 'open' },
+                   { id: 'B5', k: 's3', status: 'sealed' }];
+  // Eight pours, seven of them bourbon: 87.5% and 12.5% of the glass.
+  const hist = [];
+  for (let i = 0; i < 7; i++) hist.push({ kind: 'pour', k: 'b1', at: '2026-08-01' });
+  hist.push({ kind: 'pour', k: 's1', at: '2026-08-02' });
+  // A flight entry is not a pour and must not be counted as one.
+  hist.push({ kind: 'flight', flight: 'F', at: '2026-08-03', pours: ['s2'] });
+
+  const rows = L.drinkingVsShelf(cat, bottles, hist);
+  const bour = rows.filter(r => r.sub === 'bourbon')[0];
+  const scot = rows.filter(r => r.sub === 'scotch')[0];
+
+  eq('the shelf shares are of the shelf',
+    [bour.shelfShare, scot.shelfShare], [0.4, 0.6]);
+  eq('the pour shares are of the log',
+    [bour.pourShare, scot.pourShare], [0.875, 0.125]);
+  eq('and the gap is the difference',
+    Math.round(bour.gap * 1000) / 1000, 0.475);
+  eq('most over-poured first', rows[0].sub, 'bourbon');
+  eq('a flight entry is not a pour', bour.pours + scot.pours, 8);
+  eq('a sealed bottle still counts as owned', scot.bottles, 3);
+
+  eq('no log, no opinion', L.drinkingVsShelf(cat, bottles, []), []);
+  eq('no shelf either', L.drinkingVsShelf(cat, [], hist), []);
+
+  /* The sentence. Only where the log is long enough to carry one — a
+     category five points off its share is noise on six pours. */
+  const say = L.drinkingFinding(rows, 8);
+  eq('it says the thing worth saying', say.kind, 'over');
+  eq('in numbers, not adjectives', say.text,
+    'Bourbon is 88% of what you pour and 40% of what you own.');
+  eq('a short log says nothing at all', L.drinkingFinding(rows, 3), null);
+  eq('and neither does no data', L.drinkingFinding([], 50), null);
+
+  // A category with one or two bottles is an evening, not a pattern.
+  const thin = L.drinkingVsShelf(
+    Object.assign({}, cat, { t1: { k: 't1', name: 'T', sub: 'tequila' } }),
+    bottles.concat([{ id: 'B9', k: 't1', status: 'open' }]),
+    hist.concat([{ kind: 'pour', k: 't1', at: '2026-08-04' }]));
+  eq('one bottle poured once is not a finding',
+    (L.drinkingFinding(thin, 9) || {}).sub !== 'tequila', true);
+}
+
+/* §221  the bottles you keep having ----------------------------------- */
+sec('§221 a second bottle is a stronger statement than a star');
+{
+  const cat = { a: { k: 'a', name: 'Ardbeg 10', sub: 'scotch' },
+                b: { k: 'b', name: 'Weller 12', sub: 'bourbon' },
+                c: { k: 'c', name: 'One Off', sub: 'rye' } };
+  const bottles = [
+    { id: 'B1', k: 'a', status: 'open' },
+    { id: 'B2', k: 'a', status: 'sealed' },
+    { id: 'B3', k: 'a', status: 'gone' },     // finished, and still a signal
+    { id: 'B4', k: 'b', status: 'open' },
+    { id: 'B5', k: 'b', status: 'gone' },
+    { id: 'B6', k: 'c', status: 'open' }
+  ];
+  const keep = L.keepers(cat, bottles);
+
+  eq('only what was bought more than once',
+    keep.map(r => r.name), ['Ardbeg 10', 'Weller 12']);
+  eq('three bought, one here, one finished \u2014 and one sealed',
+    [keep[0].total, keep[0].here, keep[0].gone], [3, 2, 1]);
+  /* A bottle finished counts. Buying the same whisky three times and
+     drinking two of them is the STRONGEST version of this, and counting
+     only what is on the shelf now would erase exactly that case. */
+  eq('a whisky bought twice and both drunk still counts',
+    L.keepers(cat, [{ id: 'x', k: 'b', status: 'gone' },
+                    { id: 'y', k: 'b', status: 'gone' }])
+      .map(r => r.total), [2]);
+  eq('most bought first', keep[0].name, 'Ardbeg 10');
+  eq('a single bottle is not a keeper',
+    keep.filter(r => r.k === 'c').length, 0);
+  eq('an empty shelf keeps nothing', L.keepers(cat, []), []);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
