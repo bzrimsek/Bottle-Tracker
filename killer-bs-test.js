@@ -7956,5 +7956,71 @@ sec('§239 a fill writes named fields, name and at');
     L.libraryFillWrite(null, null, null, 1).names.length, 0);
 }
 
+/* §240  deleting an account ------------------------------------------
+ *
+ * Nine places carry a uid, and missing one leaves the account half
+ * present: a name still in the directory somebody can pick, a request
+ * still waiting, a share still pointing at a shelf that is gone.
+ *
+ * Two things are deliberately left, and both are asserted so a later
+ * change cannot quietly start taking them. Anything published to the
+ * shared library belongs to the library once it is there, and removing it
+ * would take it off everybody else. And `admins/<uid>` is write:false by
+ * design — an account cannot demote itself any more than it can promote
+ * itself, so that one line is a console job.
+ */
+sec('§240 what deleting an account clears');
+{
+  const paths = L.accountPaths('me', ['friend1', 'friend2'], ['alice']);
+
+  eq('the shelf itself goes', paths.indexOf('me') >= 0, true);
+  eq('and the directory entry', paths.indexOf('directory/me') >= 0, true);
+  eq('and anything offered but unreviewed',
+    paths.indexOf('contrib/me') >= 0, true);
+  eq('and requests waiting on this account',
+    paths.indexOf('requests/me') >= 0, true);
+  eq('and the view record', paths.indexOf('view/me') >= 0, true);
+  eq('and the stats', paths.indexOf('stats/me') >= 0, true);
+
+  /* A share is two entries in two places, and clearing one leaves the
+     other pointing at a shelf that is gone. */
+  eq('a share is cleared on the owner side',
+    paths.indexOf('shares/me/friend1') >= 0, true);
+  eq('and on the viewer side',
+    paths.indexOf('sharedWith/friend1/me') >= 0, true);
+  eq('for every person shared with',
+    paths.indexOf('sharedWith/friend2/me') >= 0, true);
+
+  /* An ask this account SENT sits under the person it was sent to. */
+  eq('a request sent to somebody else is withdrawn',
+    paths.indexOf('requests/alice/me') >= 0, true);
+
+  /* What must NOT be touched. */
+  /* `shared/` is the library; `sharedWith/` is a share pairing and is a
+     different node that happens to start with the same letters. */
+  eq('the shared library is left alone',
+    paths.some(p => p === 'shared' || p.indexOf('shared/') === 0), false);
+  eq('but share pairings are cleared',
+    paths.some(p => p.indexOf('sharedWith/') === 0), true);
+  eq('and the admin list, which is write:false anyway',
+    paths.some(p => p.indexOf('admins') === 0), false);
+  /* Somebody else's shelf is never in the list, however it was shared. */
+  eq('another person\u2019s shelf is never cleared',
+    paths.indexOf('friend1') >= 0, false);
+
+  /* The wipe is one update of nulls, so it either all goes or none does. */
+  const wipe = L.accountWipe('me', ['friend1'], []);
+  eq('every path is set to null',
+    Object.keys(wipe).every(k => wipe[k] === null), true);
+  eq('and there is one per path',
+    Object.keys(wipe).length, L.accountPaths('me', ['friend1'], []).length);
+
+  eq('no uid is nothing to clear', L.accountPaths('', ['a'], ['b']).length, 0);
+  eq('and nothing to wipe',
+    Object.keys(L.accountWipe(null, null, null)).length, 0);
+  eq('an account that shared with nobody still clears itself',
+    L.accountPaths('me', [], []).length, 6);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
