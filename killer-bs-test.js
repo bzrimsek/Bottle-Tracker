@@ -7443,9 +7443,16 @@ sec('§233 six axes, no total');
   eq('twelve bottles across four covers four', bb.have, 4);
   eq('so the smaller shelf scores higher on breadth', bb.pct > nb.pct, true);
 
-  /* Six axes, and no total anywhere in what comes back. */
+  /* However many axes there are, no total anywhere in what comes back.
+     This asserted exactly six and broke when Finish was added, which is a
+     test checking an inventory rather than the invariant it cares about:
+     the point was never the count, it was that nothing rolls them up into
+     a single number. */
   const ax = L.shelfAxes(broad.cat, broad.bs);
-  eq('there are six axes', ax.length, 6);
+  eq('every axis in the list is defined',
+    ax.length, L.SHELF_AXES.length);
+  eq('and there is more than one, or it is a score',
+    ax.length > 1, true);
   eq('and no total among them',
     ax.some(a => /total|score|overall/i.test(a.id)), false);
   eq('every axis names what it counts',
@@ -8662,59 +8669,133 @@ sec('§249 a world of whisky, told apart');
   eq('the built-in mapping works without map.json', nomap.have, 2);
 }
 
-/* §250  scarcity weighs, so the last stretch is long -----------------
+/* §250  a ladder is discounted by its holes ---------------------------
  *
- * BZ: "closing a node to 100% should get harder as scarcity increases,
- * seems like an asymptote of sorts." A binary hard/not-hard flag said a 30
- * year old was either counted or ignored; a weight says it is worth three
- * ordinary bottles, which is nearer the truth and behaves as described.
+ * BZ bought his first Octomore without knowing where it sat on the range,
+ * and asked the right question: "what happens when an edge point is on the
+ * shelf without the span in between?"
  *
- * People buy the easy buckets first, so the weight that remains is always
- * the expensive end and the curve flattens near the top by itself — no cap,
- * no pretending.
+ * Under plain coverage, nothing — the rung ticks and the shelf looks
+ * complete at the top. But bourbon and Octomore with nothing between is
+ * two ENDS and no ladder: you cannot hear what peat does at any volume in
+ * between. Scoring it on the longest unbroken run was too blunt the other
+ * way, throwing the Octomore away as though it had not been bought. So the
+ * rungs count and the holes between them discount.
+ *
+ * An earlier pass had four mechanisms on this number — evenness, scarcity
+ * weights, a knee-and-tail ceiling, hole-discounting — which contradicted
+ * each other. Two remain: a ladder discounts by holes, a set multiplies by
+ * evenness.
  */
-sec('§250 the last stretch weighs more');
+sec('§250 an edge point without the span between');
 {
-  eq('an ordinary bucket weighs one', L.gapWeight('breadth', 'japanese'), 1);
-  eq('a 30 year old weighs three', L.gapWeight('age', '30'), 3);
-  eq('a 25 weighs two', L.gapWeight('age', '25'), 2);
-  eq('Sweden weighs three', L.gapWeight('origin', 'Sweden'), 3);
-  eq('an unlisted country still weighs one',
-    L.gapWeight('origin', 'Scotland'), 1);
+  const P = L.PEAT_LABELS;
+  const pc = have => Math.round(L.ladderScore(P, have).score * 100);
 
-  /* The shape of the curve, worked out by hand. Age has seven tiers: five
-     ordinary at 1 each, plus 25 at 2 and 30 at 3, which is 10 of weight.
-     Five ordinary tiers is 5/10 — half the score for five sevenths of the
-     boxes, and the last two bottles carry the rest. */
+  eq('the whole ladder is the whole score', pc(P), 100);
+  eq('bourbon and an Octomore is mostly holes',
+    pc(['none', 'extreme']), 16);
+  /* And it is not zero: the bottle was bought and it counts for
+     something. */
+  eq('but the Octomore still counts', pc(['none', 'extreme']) > 0, true);
+  eq('a contiguous run to heavy loses nothing to holes',
+    pc(['none', 'a whisper', 'definite smoke', 'heavy']), 80);
+  eq('one hole each side costs more than one hole',
+    pc(['none', 'definite smoke', 'extreme'])
+      < pc(['none', 'a whisper', 'definite smoke']), true);
+  eq('one rung is one rung', pc(['none']), 20);
+  eq('nothing owned is nothing', pc([]), 0);
+
+  /* Holes ABOVE the top rung held are not holes — they are the part of
+     the range not reached, which coverage already counts. */
+  const low = L.ladderScore(P, ['none', 'a whisper']);
+  eq('unreached rungs above are not counted as holes', low.holes, 0);
+
+  /* Age is a ladder too, and BZ's is 10 through 21 with 25 and 30
+     missing: contiguous, so nothing is discounted and the score is simply
+     how far up the ladder it goes. */
   const mk = ages => {
     const cat = {}, bs = [];
     ages.forEach((a, i) => {
       for (let j = 0; j < 3; j++) {
-        const k = 'a' + i + 'b' + j;
-        cat[k] = { k: k, name: k, sub: 'scotch', dist: 'H' + i,
+        const k = 'a' + i + j;
+        cat[k] = { k: k, name: k, sub: 'scotch', dist: 'H' + i + j,
                    proof: 100, age: a };
         bs.push({ k: k, status: 'open' });
       }
     });
     return L.shelfAxes(cat, bs).filter(x => x.id === 'age')[0];
   };
-  const five = mk([10, 12, 15, 18, 21]);
-  eq('five of seven tiers is five tenths of the weight',
-    five.coverPct, 50);
-  const withTwentyFive = mk([10, 12, 15, 18, 21, 25]);
-  eq('adding a 25 is worth two ordinary tiers',
-    withTwentyFive.coverPct, 70);
-  const all = mk([10, 12, 15, 18, 21, 25, 30]);
-  eq('and the 30 carries the rest to the top', all.coverPct, 100);
-  /* Which is the point: the last two bottles are worth as much as the
-     first five, and 100% stays reachable rather than capped. */
-  eq('the top is still reachable', all.pct > 0, true);
+  eq('five contiguous tiers of seven', mk([10, 12, 15, 18, 21]).coverPct, 71);
+  eq('and skipping the middle costs',
+    mk([10, 30]).coverPct < mk([10, 12]).coverPct, true);
 
-  /* An axis with no scarce buckets counts boxes, exactly as before. */
-  const flat = L.shelfAxes(
-    { a: { k: 'a', name: 'a', sub: 'bourbon', dist: 'H', proof: 100 } },
-    [{ k: 'a', status: 'open' }]).filter(x => x.id === 'breadth')[0];
-  eq('an axis of equal buckets is unweighted', flat.coverPct, 0);
+  /* A set is not a ladder: sherry and rum with "nothing between" is not a
+     gap, because there is no between. */
+  eq('wood is scored as a set', L.SCALE_AXES.indexOf('wood'), -1);
+  eq('and smoke as a ladder', L.SCALE_AXES.indexOf('smoke') >= 0, true);
+}
+
+/* §251  finishing is not the same question as wood -------------------
+ *
+ * Wood asks which casks a shelf has met. Finish asks whether it has met
+ * FINISHING as a technique, and how far it goes. BZ's shelf reads Wood 83%
+ * and says nothing about the fact that 214 of his bottles were never
+ * finished at all, 86 carry one wood, 19 carry two and 6 carry three.
+ */
+sec('§251 how far the finishing goes');
+{
+  eq('no finish is unfinished', L.finishDepth({}), 0);
+  eq('and an empty string is too', L.finishDepth({ fin: '' }), 0);
+  eq('one wood is one finish', L.finishDepth({ fin: 'Sherry' }), 1);
+  eq('two is two', L.finishDepth({ fin: 'Sherry+Port' }), 2);
+  eq('three is three', L.finishDepth({ fin: 'STR+Wine+Port' }), 3);
+  eq('and four still reads as three or more',
+    L.finishDepth({ fin: 'A+B+C+D' }), 3);
+  eq('whitespace around a wood does not make a new one',
+    L.finishDepth({ fin: 'Sherry + Port' }), 2);
+
+  const mk = rows => {
+    const cat = {}, bs = [];
+    rows.forEach(([n, fin], i) => {
+      for (let j = 0; j < n; j++) {
+        const k = 'f' + i + 'b' + j;
+        cat[k] = { k: k, name: k, sub: 'scotch', dist: 'H' + i + j,
+                   proof: 100, fin: fin };
+        bs.push({ k: k, status: 'open' });
+      }
+    });
+    return L.shelfAxes(cat, bs).filter(a => a.id === 'finish')[0];
+  };
+
+  /* Three clears a rung, like everything except age and country: one
+     triple-wood bottle is a curiosity and three is a habit. */
+  const two = mk([[3, ''], [3, 'Sherry']]);
+  eq('two rungs of four', two.have, 2);
+  eq('and the deeper ones are named as missing',
+    two.missing.indexOf('three or more') >= 0, true);
+
+  const shallow = mk([[3, ''], [2, 'Sherry']]);
+  eq('two finished bottles do not clear the rung', shallow.have, 1);
+
+  /* A shelf that has met every depth but is overwhelmingly unfinished is
+     not finished with the question — which is the whole reason evenness
+     exists. */
+  const skew = mk([[200, ''], [3, 'Sherry'], [3, 'A+B'], [3, 'A+B+C']]);
+  eq('every rung present', skew.coverPct, 100);
+  eq('but a shelf that is nearly all unfinished does not read 100',
+    skew.pct < 80, true);
+
+  /* Three or more woods is rarer in the market, so it weighs more. */
+  eq('a triple wood weighs more than a single finish',
+    L.gapWeight('finish', 'three or more')
+      > L.gapWeight('finish', 'one finish'), true);
+
+  /* And it asks for the right thing when tapped. */
+  eq('the finder asks for a double wood',
+    /double wood/.test(L.axisAsk('finish', 'two woods')), true);
+  eq('and for an unfinished bottle',
+    /unfinished/.test(L.axisAsk('finish', 'unfinished')), true);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
