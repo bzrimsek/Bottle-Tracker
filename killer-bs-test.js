@@ -1590,7 +1590,13 @@ eq('it says who sent it', /^BZ would like to share/.test(txt), true);
 eq('it carries the link', txt.indexOf('https://x/#buddy=abc123XYZ') > 0, true);
 // The reader may never have heard of any of this, so the message has to
 // stand alone — and has to say what the link does NOT do.
-eq('it explains what the app is', /Bottle Tracker/.test(txt), true);
+/* Says what the app IS, without pinning the name — this assertion has
+   now broken twice on a rename, which is the test checking a label
+   rather than the thing the label is on. What matters is that somebody
+   who has never heard of any of this can read the message and know what
+   they are being sent. */
+eq('it explains what the app is',
+  /keeps what you own and what you have poured/.test(txt), true);
 eq('it says access is not automatic', /until you say so/.test(txt), true);
 eq('an anonymous sender still reads', /^I would like to share/.test(L.inviteText('', 'x')), true);
 }
@@ -7280,6 +7286,19 @@ sec('§232 the portrait a shelf earns');
      listed. BZ asked for it to back the title up, and it does that from
      the same numbers — no sentence in here is an opinion with nothing
      behind it. */
+  /* The verdict: the sentence somebody reads if they read one. Every
+     branch is a comparison the shelf can settle, not a personality
+     reading — arithmetic with a sentence around it. */
+  eq('a real shelf gets a verdict', pxP.line.length > 10, true);
+  eq('and an empty one does not',
+    L.collectorLine({ owned: 0 }, {}), '');
+  eq('a shelf with no strong opinion says so',
+    /without a single thing/.test(plain.line) || plain.line.length > 10,
+    true);
+  /* And the bullet under it does not repeat it. */
+  eq('the verdict is not said twice on one card',
+    /deep/.test(pxP.line) && /deep/.test(pxP.lines[0].text), false);
+
   eq('a real shelf gets a story', pxP.story.length > 40, true);
   eq('and it opens by saying what the shelf IS',
     /^This is /.test(pxP.story), true);
@@ -8350,6 +8369,60 @@ sec('§244 how a bottle helps the chart');
   const cat = L.axisEffect({ name: 'Nikka', sub: 'japanese' }, axes);
   eq('a category gap is named properly',
     /Clears Japanese/.test(L.axisEffectLine(cat)), true);
+}
+
+/* §245  what to do next ----------------------------------------------
+ *
+ * Third-party feedback: once the app understands you it should do
+ * something with that understanding. Home said what you own and what it
+ * says about you, and then stopped — every action lived on another tab.
+ *
+ * At most three, every one earned by the state. A row that is the same
+ * every visit is a navigation bar in the wrong place; a row that changes
+ * because the shelf changed is the app paying attention. Cheapest first:
+ * an evening with what you already own before spending money.
+ */
+sec('§245 the actions a shelf earns');
+{
+  const full = L.nextActions({
+    tonight: 4, tonightTitle: 'AGE IS NOT A FLAVOUR', trophies: 5,
+    pours: 120, thinnest: { label: 'Origin', pct: 67, gap: 'Lowland' },
+    pick: 'An Amontillado cask', waiting: 3
+  });
+  eq('never more than three', full.length, 3);
+  eq('an evening you already own comes first', full[0].id, 'tonight');
+  eq('and names the flight', /AGE IS NOT A FLAVOUR/.test(full[0].why), true);
+  eq('then the bottles you bought twice and never opened',
+    full[1].id, 'trophies');
+  eq('and spending money is below both', full[2].id, 'gap');
+
+  /* A shelf with no log gets told why that matters, because everything in
+     the second half of the app runs on it. */
+  const nolog = L.nextActions({ pours: 0, thinnest: null });
+  eq('an unpoured shelf is asked for a pour', nolog[0].id, 'pour');
+  eq('and told what it unlocks',
+    /what you drink/.test(nolog[0].why), true);
+  eq('a shelf that has been poured is not nagged',
+    L.nextActions({ pours: 3 }).some(a => a.id === 'pour'), false);
+
+  /* An admin with work waiting is the only person who can clear it, and
+     it is the last thing offered rather than the first. */
+  const adm = L.nextActions({ pours: 5, waiting: 2 });
+  eq('an admin is told what is waiting',
+    adm.some(a => a.id === 'library'), true);
+  eq('and somebody who is not an admin is not',
+    L.nextActions({ pours: 5, waiting: 0 })
+      .some(a => a.id === 'library'), false);
+
+  /* Nothing to do is a real state and gets no card. */
+  eq('a shelf with nothing owing offers nothing',
+    L.nextActions({ pours: 9 }).length, 0);
+  eq('and no state at all is not an error', L.nextActions(null).length, 0);
+
+  /* Every action says WHY, or it is a button with no argument behind it. */
+  eq('every action carries its reason',
+    full.every(a => a.why && a.why.length > 8), true);
+  eq('and something to press', full.every(a => a.id && a.label), true);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

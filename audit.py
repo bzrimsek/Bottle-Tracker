@@ -17,12 +17,15 @@ Checks:
   11. Install prompt captured; manifest valid with a maskable icon
   12. data.json and map.json parse and hold what the app expects
   13. Storage availability is probed rather than assumed
-  14. Named lock files exist for this version (html and sw.js)
+  14. Named lock files exist AND match index.html / sw.js byte for byte
 """
 import sys, re, os, json, subprocess
 
 KEEP_IN_HEADER = 10
-ASSETS = ['mark.png', 'icon-192.png', 'icon-512.png', 'data.json', 'map.json']
+ASSETS = ['mark.png', 'icon-192.png', 'icon-512.png', 'data.json', 'map.json',
+          # The barcode decoder for browsers with no BarcodeDetector, which
+          # is every iPhone. Precached because scanning happens in shops.
+          'zxing.min.js']
 
 failures = 0
 
@@ -151,7 +154,7 @@ def run_audit(html_path):
             fail('sw.js syntax error:\n' + r.stderr[:300])
         else:
             ok('sw.js syntax valid')
-        swm = re.search(r"CACHE_NAME\s*=\s*'killer-bs-v([\d.]+)'", sw)
+        swm = re.search(r"CACHE_NAME\s*=\s*'bottlefolio-v([\d.]+)'", sw)
         if not swm:
             fail('Could not parse sw.js CACHE_NAME')
         elif version and swm.group(1) != version:
@@ -224,6 +227,52 @@ def run_audit(html_path):
         fail('.screen.on is defined %d times; a later one overrides the '
              'layout rule and drops the nav' % n_screen)
 
+    # Never detach an element that something else looks up by id.
+    #
+    # I moved the search row by removing it from the document, and every
+    # $('#shopQ') in the file — eight of them, one on the first line of
+    # renderShop — started returning null. The app failed to start. A smoke
+    # test cannot catch it, because a static stub cannot model a runtime
+    # removal; the rule can be checked directly.
+    for m in re.finditer(r'removeChild\((\w+)\)', html):
+        var = m.group(1)
+        near = html[max(0, m.start() - 400):m.start()]
+        idm = re.search(r"getElementById\('([^']+)'\)", near)
+        if not idm:
+            continue
+        eid = idm.group(1)
+        # Does anything look up an id that lives INSIDE that element?
+        seg = html.split('id="%s"' % eid)
+        if len(seg) > 1:
+            inner = re.findall(r'id="([^"]+)"', seg[1][:600])
+            for child in inner:
+                if html.count("'#%s'" % child) + html.count(
+                        "getElementById('%s')" % child) > 1:
+                    fail('#%s is detached but #%s inside it is looked up '
+                         'elsewhere; detaching makes those return null'
+                         % (eid, child))
+
+    # The shelf header and its rows must share ONE grid definition. They
+    # were separate elements with the columns copied between them, so every
+    # change to a row had to be mirrored by hand and was not — BZ reported
+    # the misalignment four times.
+    if '.shelfgrid,.item{' not in css:
+        fail('the shelf header and rows no longer share one grid rule')
+    head = html.split('class="listhead shelfgrid"')
+    if len(head) != 2:
+        fail('the shelf header does not carry the shared grid class')
+    else:
+        # A header cell is a plain label OR a sort button. Counting only
+        # <b> meant the first sortable header read as five missing columns.
+        block = head[1].split('</div>')[0]
+        cells = block.count('<b>') + block.count('class="sorthead"')
+        cols = css.split('.shelfgrid,.item{')[1].split('}')[0]
+        n = len(cols.split('grid-template-columns:')[1]
+                .split(';')[0].strip().split())
+        if cells != n:
+            fail('the shelf header has %d cells against %d columns'
+                 % (cells, n))
+
     layout = [
         ('height:100dvh', 'body is not a fixed-height column'),
         ('.screen.on{display:block;flex:1', 'the active screen does not scroll'),
@@ -292,12 +341,31 @@ def run_audit(html_path):
             fail(f'{name} does not parse: {e}')
 
     # ── 14. Lock files ────────────────────────────────────────────
+    #
+    # Existing is not enough. The lock file is the record of what shipped as
+    # this version, and bump.py writes it FROM index.html at bump time — so
+    # any edit made after the bump leaves the two different, silently, and
+    # the named file BZ uploads is not the file that was tested. That
+    # happened on 2026-09-03: a layout fix landed in index.html after
+    # v1.26.38 was cut, and every check still passed.
     if version:
-        for lock in [f'killer-bs-v{version}.html', f'killer-bs-v{version}-sw.js']:
-            if not os.path.exists(os.path.join(base, lock)):
+        pairs = [(f'bottlefolio-v{version}.html', 'index.html'),
+                 (f'bottlefolio-v{version}-sw.js', 'sw.js')]
+        for lock, source in pairs:
+            lp = os.path.join(base, lock)
+            if not os.path.exists(lp):
                 fail(f'lock file missing: {lock}')
+                continue
+            with open(lp, 'rb') as f:
+                locked = f.read()
+            with open(os.path.join(base, source), 'rb') as f:
+                current = f.read()
+            if locked != current:
+                fail(f'{source} has changed since v{version} was cut: '
+                     f'{lock} is {len(locked)} bytes against {len(current)}. '
+                     f'Bump, so the named file is the file that was tested.')
             else:
-                ok(f'lock file {lock}')
+                ok(f'lock file {lock} matches {source}')
 
     print()
     if failures == 0:

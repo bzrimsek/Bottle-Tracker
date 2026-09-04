@@ -88,15 +88,44 @@ def next_version(major, minor, patch):
 def main():
     if len(sys.argv) < 2 or not sys.argv[1].strip():
         sys.exit('Refusing to bump: a changelog entry is required.\n'
-                 'Usage: python3 bump.py "what changed"')
-    entry = ' '.join(sys.argv[1].split())
+                 'Usage: python3 bump.py [--renumber] [x.y.z] "what changed"')
+
+    # An explicit version, for a release that is a statement rather than an
+    # increment. Everything else about the bump is unchanged, so a
+    # deliberate 1.0 still goes through the changelog and the same five
+    # write locations.
+    forced = None
+    args = sys.argv[1:]
+    # Going BACKWARD is refused below, because doing it by accident renames
+    # a release to a number that already shipped. Doing it on purpose is a
+    # different act and says so: --renumber. BZ asked for 1.5.0 from
+    # 1.26.39 on 2026-09-03 — the number as a statement about where the app
+    # has got to, rather than a count of how often it has been touched.
+    renumber = False
+    if args and args[0].strip() == '--renumber':
+        renumber = True
+        args = args[1:]
+    if re.fullmatch(r'\d+\.\d+\.\d+', args[0].strip()):
+        forced = tuple(int(x) for x in args[0].strip().split('.'))
+        args = args[1:]
+        if not args or not ' '.join(args).strip():
+            sys.exit('Refusing to bump: a changelog entry is still required.')
+    entry = ' '.join(' '.join(args).split())
     if '[describe changes here]' in entry:
         sys.exit('Refusing to bump: changelog placeholder not filled in.')
 
     html = INDEX.read_text()
     sw = SW.read_text()
 
-    major, minor, patch = next_version(*read_version(html))
+    cur = tuple(read_version(html))
+    if forced:
+        if forced <= cur and not renumber:
+            sys.exit('Refusing to bump: %d.%d.%d is not ahead of %d.%d.%d.\n'
+                     'If you mean it, say so: bump.py --renumber x.y.z "entry"'
+                     % (forced + cur))
+        major, minor, patch = forced
+    else:
+        major, minor, patch = next_version(*cur)
     ver = '%d.%d.%d' % (major, minor, patch)
     now = eastern_now()
     stamp = now.strftime('%Y-%m-%d %I:%M %p ET')
@@ -134,7 +163,7 @@ def main():
                   lambda m: m.group(1) + 'v' + ver + m.group(2), html, count=1)
 
     # 5. service worker cache name
-    sw, n = re.subn(r"(const CACHE_NAME\s*=\s*'killer-bs-v)[\d.]+(')",
+    sw, n = re.subn(r"(const CACHE_NAME\s*=\s*'bottlefolio-v)[\d.]+(')",
                     lambda m: m.group(1) + ver + m.group(2), sw, count=1)
     if not n:
         sys.exit('CACHE_NAME not found in sw.js — cannot bump.')
@@ -156,21 +185,24 @@ def main():
     CHANGELOG.write_text(body)
 
     # Lock files, cut from the working copies just written (rule 23).
-    lock_html = HERE / ('killer-bs-v%s.html' % ver)
-    lock_sw = HERE / ('killer-bs-v%s-sw.js' % ver)
+    lock_html = HERE / ('bottlefolio-v%s.html' % ver)
+    lock_sw = HERE / ('bottlefolio-v%s-sw.js' % ver)
     shutil.copy(INDEX, lock_html)
     shutil.copy(SW, lock_sw)
     # Previous version's locks are superseded; leaving them accumulates
     # near-identical files nobody reads.
-    for old in HERE.glob('killer-bs-v*'):
+    # Both prefixes: the locks were killer-bs-v* before the rename and a
+    # superseded one under the old name is still superseded.
+    for old in list(HERE.glob('killer-bs-v*')) + list(HERE.glob('bottlefolio-v*')):
         if old.name not in (lock_html.name, lock_sw.name) \
-                and re.match(r'killer-bs-v[\d.]+(-sw\.js|\.html)$', old.name):
+                and re.match(r'(killer-bs|bottlefolio)-v[\d.]+(-sw\.js|\.html)$',
+                             old.name):
             old.unlink()
     print('bumped to v%s  Build %s' % (ver, stamp))
     print('header:    // v%s  %s  %s' % (ver, day, head))
     if head.rstrip('\u2026') != entry.strip().rstrip('.'):
         print('full entry (%d chars) written to CHANGELOG.md' % len(entry))
-    print('locks:     killer-bs-v%s.html + killer-bs-v%s-sw.js' % (ver, ver))
+    print('locks:     bottlefolio-v%s.html + bottlefolio-v%s-sw.js' % (ver, ver))
     print('now run:   python3 ship.py')
 
 
