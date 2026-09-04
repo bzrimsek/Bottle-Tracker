@@ -6432,5 +6432,388 @@ sec('§221 a second bottle is a stronger statement than a star');
   eq('an empty shelf keeps nothing', L.keepers(cat, []), []);
 }
 
+/* §222  offering the same three, for ever -----------------------------
+ *
+ * BZ: "every build it seems I have the same 3 bottles offered to the
+ * library (that I accept)... something is not taking." His log:
+ *
+ *   03:19:30 offered 3 to the library
+ *   03:19:12 offered 3 to the library
+ *   03:19:09 offered 3 to the library      (six times in thirty seconds)
+ *
+ * fbContribute rebuilt the payload on every save_ and wrote it with no
+ * comparison at all, so accepting the three removed them from the queue
+ * and the next save put them straight back.
+ *
+ * And a comparison would not have helped: the entry carried
+ * `at: Date.now()`, so every payload differed from the last one whatever
+ * was in it. Same fault as the push that stamped its own clock — a value
+ * that changes on its own defeats any test of whether anything changed.
+ */
+sec('§222 an offer is made once');
+{
+  const entry = { name: 'Ardbeg 10', proof: 92, by: 'BZ', at: 1 };
+  const later = { name: 'Ardbeg 10', proof: 92, by: 'BZ', at: 999999 };
+  const fixed = { name: 'Ardbeg 10', proof: 92.4, by: 'BZ', at: 2 };
+
+  eq('the stamp is not part of what was offered',
+    L.contribSig(entry), L.contribSig(later));
+  eq('nor is who offered it',
+    L.contribSig({ name: 'A', by: 'BZ' }), L.contribSig({ name: 'A', by: 'X' }));
+  eq('but a corrected proof is',
+    L.contribSig(entry) === L.contribSig(fixed), false);
+
+  /* THE PAIRING, as the fault happened: offer, then save again with
+     nothing changed. The second must send NOTHING, or accepting is undone
+     by the next keystroke. */
+  let sent = {};
+  let d = L.contribDelta({ ardbeg_10: entry }, sent);
+  eq('the first offer goes', Object.keys(d.send), ['ardbeg_10']);
+  sent = d.sigs;
+  d = L.contribDelta({ ardbeg_10: later }, sent);
+  eq('the same bottle a second later does not', Object.keys(d.send), []);
+  d = L.contribDelta({ ardbeg_10: fixed }, sent);
+  eq('a real correction does', Object.keys(d.send), ['ardbeg_10']);
+
+  // Several at once, only the new one sent.
+  sent = L.contribDelta({ a: entry, b: entry }, {}).sigs;
+  eq('two offered, then a third',
+    Object.keys(L.contribDelta({ a: entry, b: entry, c: fixed }, sent).send),
+    ['c']);
+  eq('and nothing at all when nothing moved',
+    Object.keys(L.contribDelta({ a: entry, b: entry }, sent).send), []);
+
+  /* The signatures are returned for ALL of them, not only the ones sent —
+     the caller records them after the write lands, and a record that
+     covered only the sent ones would forget everything else. */
+  eq('every entry gets a signature',
+    Object.keys(L.contribDelta({ a: entry, b: entry }, sent).sigs).sort(),
+    ['a', 'b']);
+  eq('nothing offered, nothing to record',
+    L.contribDelta({}, {}), { send: {}, sigs: {} });
+}
+
+/* §223  what the shelf adds up to -------------------------------------
+ *
+ * This arithmetic ran INSIDE renderShelf, which the harness cannot reach,
+ * so none of it had ever been tested — the same shape that let a
+ * ReferenceError sit in renderShop for fourteen versions with every test
+ * passing (rule 30). It is now L.shelfSummary and can be driven directly.
+ *
+ * Expected values were worked out by hand from the fixture below before
+ * any of these assertions were written (rule 28):
+ *
+ *   4 bottles. open = a-open, b-open, c-open = 3, so sealed = 1.
+ *   worth = 50x2 + 100x1 + nothing for c = 200.
+ *   priced (paid > 0) = 40 and 60 = 2, spent = 100.
+ *   showSpent: 2 >= 4/2, so true.
+ */
+sec('\u00a7223 what the shelf adds up to');
+{
+  const catalog = { a: { k: 'a', msrp: 50 }, b: { k: 'b', msrp: 100 },
+                    c: { k: 'c' } };
+  const bottles = [
+    { k: 'a', status: 'open', paid: 40 },
+    { k: 'a', status: 'sealed', paid: 60 },
+    { k: 'b', status: 'open' },
+    { k: 'c', status: 'open', paid: 0 }
+  ];
+  const own = { a: 2, b: 1, c: 1 };
+  const sum = L.shelfSummary(['a', 'b', 'c'], catalog, bottles, own);
+
+  eq('every owned bottle is counted', sum.bottles, 4);
+  eq('open is counted', sum.open, 3);
+  eq('sealed is the rest', sum.sealed, 1);
+  /* From msrp times how many are owned — never from what was paid. That
+     mistake reported $199 across the whole shelf. */
+  eq('worth comes from the catalog price', sum.worth, 200);
+  eq('a zero paid is not a price', sum.priced, 2);
+  eq('spent totals only real prices', sum.spent, 100);
+  eq('half of them carry a price, so it shows', sum.showSpent, true);
+
+  /* One priced bottle out of four is not a total. */
+  const thin = L.shelfSummary(['a', 'b', 'c'], catalog,
+    [{ k: 'a', status: 'open', paid: 40 }, { k: 'a', status: 'open' },
+     { k: 'b', status: 'open' }, { k: 'c', status: 'open' }], own);
+  eq('one price in four is not reported as a total', thin.showSpent, false);
+
+  eq('an empty shelf totals nothing',
+    L.shelfSummary([], catalog, bottles, own),
+    { bottles: 0, open: 0, sealed: 0, worth: 0, priced: 0, spent: 0,
+      showSpent: false });
+
+  /* The line and the numbers are checked together so the wording cannot
+     drift from the arithmetic behind it (rule 30a). */
+  eq('the line reads as the numbers do', L.shelfSummaryLine(sum),
+    '4 bottles  \u00b7  3 open  \u00b7  1 sealed  \u00b7  $200 at list'
+    + '  \u00b7  $100 paid');
+  eq('a thin shelf drops the paid total',
+    L.shelfSummaryLine(thin).indexOf('paid'), -1);
+  eq('one bottle is singular',
+    L.shelfSummaryLine({ bottles: 1, open: 1, sealed: 0, worth: 0,
+      priced: 0, spent: 0, showSpent: false }), '1 bottle  \u00b7  1 open');
+
+  eq('everything shown is just the count', L.shelfCountLine(12, 12),
+    '12 whiskies');
+  eq('a filtered shelf says so', L.shelfCountLine(3, 12), '3 of 12');
+}
+
+/* §224  what goes on the wishlist, and why ----------------------------
+ *
+ * This built itself inside a click handler in renderShop, so nothing here
+ * had a test over it (rule 30). It is now L.wishEntry.
+ *
+ * Worked out by hand before the assertions (rule 28):
+ *
+ *   A wish pour is one carrying kind:'wish' — a name with no key. A pour
+ *   with a key is a shelf pour however it is named, which is why the
+ *   fixture below has to say so explicitly.
+ *   A flight whose core carries a WISH pour named the same thing is the
+ *   flight this bottle completes, so forFlight is that flight's title and
+ *   reason is null — one or the other, never both.
+ *   With no such flight, forFlight is null and reason is the fit verdict.
+ *   The name is stored through L.typedName, so spacing and case are
+ *   normalised: "  ardbeg   uigeadail " becomes "Ardbeg Uigeadail".
+ */
+sec('\u00a7224 what goes on the wishlist, and why');
+{
+  const flights = [
+    { title: 'WHEAT, TURNED UP',
+      core: [{ kind: 'wish', name: 'Weller Full Proof' },
+             { k: 'larceny_bp' }] },
+    { title: 'ISLAY, SIDE BY SIDE', core: [{ k: 'ardbeg_10' }] }
+  ];
+  const catalog = { ardbeg_10: { k: 'ardbeg_10', name: 'Ardbeg 10', msrp: 50 } };
+  const bottles = [{ k: 'ardbeg_10', status: 'open' }];
+
+  const hit = L.wishEntry('weller full proof', 90, flights, {}, catalog, bottles);
+  eq('the flight it would complete is named', hit.forFlight, 'WHEAT, TURNED UP');
+  eq('a flight and a reason are never both given', hit.reason, null);
+  eq('the estimate is kept', hit.est, 90);
+  eq('the name is tidied', hit.name, 'Weller Full Proof');
+
+  const miss = L.wishEntry('  ardbeg   uigeadail ', null, flights, {},
+    catalog, bottles);
+  eq('no flight wants it, so none is named', miss.forFlight, null);
+  eq('and then it carries a reason instead', typeof miss.reason, 'string');
+  eq('spacing and case are normalised', miss.name, 'Ardbeg Uigeadail');
+  eq('no estimate stays null', miss.est, null);
+
+  /* A keyed pour is not a wish pour: the flight already has that bottle
+     named, so it is not waiting on anybody to buy it. */
+  const keyed = L.wishEntry('ardbeg 10', null, flights, {}, catalog, bottles);
+  eq('a flight that already keys the bottle is not completed by buying it',
+    keyed.forFlight, null);
+
+  eq('no flights at all is not an error',
+    L.wishEntry('anything', null, [], {}, catalog, bottles).forFlight, null);
+  eq('a missing flight list is not an error either',
+    L.wishEntry('anything', null, null, null, catalog, bottles).forFlight, null);
+}
+
+/* §223  the arithmetic that was hiding inside renderShelf --------------
+ *
+ * Rule 30, and the reason it is a rule. A ReferenceError lived in
+ * renderShop for fourteen versions with 1,794 assertions passing over it:
+ * the harness cannot call a render function, so nothing inside one is
+ * tested however much of it is arithmetic. These six were extracted out of
+ * renderShelf so they can be.
+ *
+ * Every expected value below was worked out by hand before the assertion
+ * was written (rule 28), not read off the function it is checking.
+ */
+sec('§223 the shelf tiles, the money column and the count');
+{
+  /* Four products, three of them owned. d is in the catalogue and owned by
+     nobody here, which is the case that made the tiles disagree with the
+     list: the library carries entries this shelf has never bought. */
+  const catalog = {
+    a: { sub: 'bourbon' }, b: { sub: 'bourbon' },
+    c: { sub: 'scotch' },  d: { sub: 'rye' }
+  };
+  const counts = { a: 1, b: 2, c: 1 };
+
+  const t = L.shelfTypeTiles(catalog, counts);
+  eq('two types are owned, not three', t.types, 2);
+  eq('three whiskies, counted per product not per bottle', t.total, 3);
+  eq('the biggest type leads', t.tiles[0].sub, 'bourbon');
+  eq('and carries its count', t.tiles[0].n, 2);
+  eq('the smaller follows', t.tiles[1].sub, 'scotch');
+  eq('a catalogue entry nobody owns is not a tile',
+    t.tiles.some(x => x.sub === 'rye'), false);
+
+  /* Ties break on name, so the order cannot depend on key insertion. */
+  const tie = L.shelfTypeTiles(
+    { x: { sub: 'zzz' }, y: { sub: 'aaa' } }, { x: 1, y: 1 });
+  eq('a tie breaks on name', tie.tiles[0].sub, 'aaa');
+
+  eq('an empty catalogue is not an error', L.shelfTypeTiles({}, {}).total, 0);
+  eq('a missing catalogue is not an error either',
+    L.shelfTypeTiles(null, null).types, 0);
+
+  /* A product with no sub is filed under other rather than dropped. */
+  const noSub = L.shelfTypeTiles({ a: {} }, { a: 1 });
+  eq('a product with no style is still counted', noSub.tiles[0].sub, 'other');
+
+  eq('owned counts products, not bottles',
+    L.ownedProductCount(catalog, counts), 3);
+  eq('nothing owned is zero, not the catalogue size',
+    L.ownedProductCount(catalog, {}), 0);
+
+  /* Untouched: the state in which tiles are the way in. */
+  eq('nothing typed and nothing filtered is untouched',
+    L.shelfUntouched('', { types: [] }), true);
+  eq('a search makes it touched',
+    L.shelfUntouched('ardbeg', { types: [] }), false);
+  eq('whitespace alone is not a search',
+    L.shelfUntouched('   ', { types: [] }), true);
+  eq('a facet makes it touched',
+    L.shelfUntouched('', { types: ['bourbon'] }), false);
+  eq('favourites only makes it touched',
+    L.shelfUntouched('', { types: [], favsOnly: true }), false);
+
+  /* The money column. What you paid wins over the price when it is known;
+     this ran off the wrong field once and showed a dash on 322 of 325. */
+  const avg = L.rowCost({ avg: 41.4, n: 2 }, 99);
+  eq('what you paid beats the price', avg.text, '$41');
+  eq('and says how many it averaged', avg.title, 'Average of 2 you paid');
+  eq('it is not flagged as a price', avg.isMsrp, false);
+
+  const one = L.rowCost({ avg: 41.5, n: 1 }, null);
+  eq('a single payment rounds half up', one.text, '$42');
+  eq('and does not claim to be an average', one.title, 'What you paid');
+
+  const list = L.rowCost(null, 79.99);
+  eq('the price stands in when nothing was recorded', list.text, '$80');
+  eq('and is flagged as a price', list.isMsrp, true);
+
+  const none = L.rowCost(null, null);
+  eq('neither one gives a dash, not a blank', none.text, '\u2014');
+  eq('a dash is not a price', none.isMsrp, false);
+
+  /* Zero is a real thing to have paid and must not read as unknown. */
+  const free = L.rowCost({ avg: 0, n: 1 }, 60);
+  eq('a bottle that cost nothing still reports what you paid',
+    free.text, '$0');
+
+  /* The have column. */
+  const many = L.rowHave(3, 2, true);
+  eq('three bottles, two sealed', many.text, '3 \u00b7 2s');
+  eq('spelled out in the tooltip', many.title, '3 bottles, 2 sealed');
+  eq('one of them is open', many.allSealed, false);
+
+  const single = L.rowHave(1, 0, true);
+  eq('one open bottle says just the number', single.text, '1');
+  eq('and is singular', single.title, '1 bottle, all open');
+
+  const shut = L.rowHave(2, 2, false);
+  eq('all sealed is marked', shut.allSealed, true);
+
+  /* The wishlist, newest first, with a missing date sorting last rather
+     than posing as the oldest — the same rule the shelf sorts by. */
+  const w = L.wishRows([
+    { name: 'older', added: '2026-09-01' },
+    { name: 'undated' },
+    { name: 'newer', added: '2026-09-03' }
+  ]);
+  eq('the newest want leads', w[0].name, 'newer');
+  eq('then the older one', w[1].name, 'older');
+  eq('an undated want sorts last', w[2].name, 'undated');
+  eq('an empty list is not an error', L.wishRows([]).length, 0);
+  eq('a missing list is not an error either', L.wishRows(null).length, 0);
+}
+
+/* §224  the arithmetic that was hiding inside renderShop ---------------
+ *
+ * This is the function the `cand` ReferenceError lived in, undetected
+ * through fourteen versions, because nothing inside a render function is
+ * reachable from here. Three of the five below have already caused a bug
+ * of their own, and each of those bugs is a case in this section.
+ */
+sec('§224 shop fields, seeds and what a lookup may overwrite');
+{
+  /* Field precedence: yours, then the seed, then nothing. */
+  const shop = { proof: 100, dist: '' };
+  const seed = { proof: 90, dist: 'Springbank', sub: 'scotch' };
+
+  const mine = L.shopSeed(shop, seed, 'proof');
+  eq('what you typed wins over the seed', mine.value, 100);
+  eq('and is not marked as seeded', mine.seeded, false);
+
+  const lent = L.shopSeed(shop, seed, 'sub');
+  eq('the seed fills what you left alone', lent.value, 'scotch');
+  eq('and is marked as seeded', lent.seeded, true);
+
+  /* An empty string of your own is not a value, so the seed still shows —
+     but it is the seed, and must be marked as one. */
+  const blank = L.shopSeed(shop, seed, 'dist');
+  eq('an empty field of yours falls through to the seed',
+    blank.value, 'Springbank');
+  eq('and reads as seeded, not as yours', blank.seeded, true);
+
+  const nothing = L.shopSeed({}, {}, 'fin');
+  eq('neither one gives an empty string', nothing.value, '');
+  eq('and nothing to mark', nothing.seeded, false);
+
+  /* Zero is a real proof to have typed and must not fall through. */
+  const zero = L.shopSeed({ msrp: 0 }, { msrp: 99 }, 'msrp');
+  eq('a zero you typed is still yours', zero.value, 0);
+  eq('and is not seeded', zero.seeded, false);
+
+  /* The bottle changing under the form. BZ searched springbank 15 and got
+     Barrell Craft Spirits at 109.76 left over from the search before. */
+  eq('a different bottle resets the form',
+    L.shopIsNewBottle('Barrell Craft Spirits', 'springbank 15'), true);
+  eq('the same bottle differently written does not',
+    L.shopIsNewBottle("Aberlour A'Bunadh Alba", 'aberlour abunadh alba'), false);
+  eq('nothing typed yet counts as a change',
+    L.shopIsNewBottle('Springbank 15', ''), true);
+  eq('an empty form against an empty box is not a change',
+    L.shopIsNewBottle('', ''), false);
+
+  /* What reads as LOOKED UP. Type defaults to bourbon, and marking that
+     default as a finding told BZ that Longrow is a bourbon in the same
+     styling as a real answer. */
+  eq('a carried value for this bottle reads as found',
+    L.shopFieldLooked({ proof: 92 }, 'Longrow Peated', 'longrow peated',
+      'proof'), true);
+  eq('a default nothing carried does not',
+    L.shopFieldLooked({ sub: undefined }, 'Longrow Peated', 'longrow peated',
+      'sub'), false);
+  eq('an empty carried value does not either',
+    L.shopFieldLooked({ fin: '' }, 'Longrow Peated', 'longrow peated',
+      'fin'), false);
+  eq('a lookup for a DIFFERENT bottle does not mark this one',
+    L.shopFieldLooked({ proof: 92 }, 'Springbank 15', 'longrow peated',
+      'proof'), false);
+  eq('no lookup at all marks nothing',
+    L.shopFieldLooked({ proof: 92 }, null, 'longrow peated', 'proof'), false);
+
+  /* What a lookup may overwrite. */
+  eq('an empty field takes the answer',
+    L.lookupMayOverwrite('', false), true);
+  eq('a seeded guess is replaced by a real answer',
+    L.lookupMayOverwrite('90', true), true);
+  eq('what you typed is left alone',
+    L.lookupMayOverwrite('100', false), false);
+
+  /* What the note says afterwards. Looking the source up a second time
+     returned null on a miss and threw here once. */
+  eq('a lookup says to check it',
+    L.lookupNote({ source: 'lookup' }, {}),
+    'Looked up. Check it before you trust it.');
+  eq('a shelf hit the library also holds is the library',
+    L.lookupNote({ source: 'shelf', k: 'weller_12' }, { weller_12: {} }),
+    'Already in the library.');
+  eq('a shelf hit only you hold is your shelf',
+    L.lookupNote({ source: 'shelf', k: 'my_own' }, {}),
+    'Already on your shelf.');
+  eq('a shelf hit with no key is your shelf',
+    L.lookupNote({ source: 'shelf' }, {}), 'Already on your shelf.');
+  eq('nothing back says nothing', L.lookupNote(null, {}), '');
+  eq('a missing library is not an error',
+    L.lookupNote({ source: 'shelf', k: 'x' }, null), 'Already on your shelf.');
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

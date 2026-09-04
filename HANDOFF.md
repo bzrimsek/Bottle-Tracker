@@ -181,12 +181,11 @@ something that already existed.
    not re-raise this. Any FUTURE change to `firebase-rules.json` still has
    to be pasted by hand — it does not deploy with the app — so a delivery
    that edits that file must say so explicitly.
-2. **Recover the lost bottle.** "heaven hill grain to glass wheated
-   bourbon" is in the shared library but not on his shelf — Shop → search
-   → I bought it. Then re-add it as pour 5 of WHEAT, TURNED UP.
-3. **Verify on his devices**: shelf type tiles and the library button. He
-   reported both dead; the cause was almost certainly the two-tab loop,
-   fixed in 1.5.11, but he has not confirmed since.
+2. ~~Recover the lost bottle.~~ **Closed 2026-09-04: BZ recovered the
+   Heaven Hill grain-to-glass wheated bourbon and restored it as pour 5 of
+   WHEAT, TURNED UP himself. Do not re-raise.**
+3. ~~Verify on his devices: shelf type tiles and the library button.~~
+   **Closed 2026-09-04: BZ confirmed both work. Do not re-raise.**
 
 **Code**
 
