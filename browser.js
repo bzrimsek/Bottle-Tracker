@@ -23,8 +23,31 @@ const dir = path.dirname(file);
 // Every screen in the tab bar, plus the ones reached from inside.
 const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
 
+/* Reporter state lives here, not inside the walk: the catch that reports a
+   crash sits outside the async function and has to be able to name the
+   step that died. */
+let _step = null, _stepFails = 0, _found = null;
+
 (async () => {
   const failures = [];
+  _found = failures;   // so the crash handler can report what was found
+
+/* Step reporting. This walk is long and BZ cannot see inside a running
+   command, so silence reads as a hang. Each step says it started and says
+   how it ended, and the count of failures is reported per step rather than
+   only in one total at the end. A step that throws names itself. */
+function endStep() {
+  if (!_step) return;
+  const n = failures.length - _stepFails;
+  console.log((n ? '  \u2716 ' : '  \u2713 ') + _step
+    + (n ? ' \u2014 ' + n + ' failure(s)' : ''));
+  _step = null;
+}
+function step(n) {
+  endStep();
+  _step = n; _stepFails = failures.length;
+  console.log('  \u00b7 ' + n + ' \u2026');
+}
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 390, height: 780 } });
 
@@ -72,6 +95,15 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
   // Served over http, not file://. A file:// page cannot fetch its own
   // data.json — the scheme is not supported — so the app loads with an
   // empty shelf and every check below tests the wrong thing.
+  /* Registered AFTER the catch-all on purpose: Playwright matches the most
+     recently added route first, so a lookup route added before it never
+     runs and every lookup 404s. */
+  await page.route('http://app.local/lookup**', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ name: 'Glenfarclas 105', proof: 120,
+                           dist: 'Glenfarclas', type: 'scotch' })
+  }));
+
   await page.goto('http://app.local/' + path.basename(file));
   await page.waitForTimeout(1200);
 
@@ -95,6 +127,7 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     await page.waitForTimeout(600);
   }
 
+  step('did it start');
   // 1. Did it start? The banner is what BZ saw twice today.
   const banner = await page.locator('text=/failed to start/i').count();
   if (banner) {
@@ -102,6 +135,7 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     failures.push('DID NOT START: ' + msg.trim().slice(0, 120));
   }
 
+  step('every tab draws, nav survives');
   // 2. Every tab draws, and the nav survives it. The nav went missing on a
   //    phone and nothing here noticed, because nothing here was a phone.
   for (const tab of TABS) {
@@ -127,6 +161,35 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     if (text.length < 12) failures.push(tab + ': screen is empty');
   }
 
+  // 2b. The screens with no tab of their own. They are reached from a gear,
+  //     a badge or a card, and NOTHING walked them — which is five of the
+  //     thirteen, and exactly the five that need an admin or a second
+  //     person, so they are also the five with the least evidence behind
+  //     them. renderLibrary alone is 185 lines that nothing ever drew.
+  for (const name of ['settings', 'diag', 'library', 'buddies', 'shared']) {
+    const drew = await page.evaluate(n => {
+      /* global show */
+      try { show(n); } catch (e) { return 'threw: ' + e.message; }
+      const scr = document.getElementById('scr-' + n);
+      if (!scr) return 'no screen';
+      if (!scr.classList.contains('on')) return 'did not open';
+      return (scr.innerText || '').trim().length;
+    }, name);
+    await page.waitForTimeout(200);
+    if (typeof drew === 'string') {
+      failures.push(name + ': ' + drew);
+    } else if (drew < 12) {
+      failures.push(name + ': screen is empty');
+    }
+    const nav2 = await page.locator('nav').boundingBox();
+    if (nav2 && nav2.y + nav2.height > page.viewportSize().height + 2) {
+      failures.push(name + ': nav is off the bottom');
+    }
+  }
+  await page.locator('nav button[data-scr="home"]').click();
+  await page.waitForTimeout(200);
+
+  step('shelf lists bottles, header lines up');
   // 3. The shelf actually lists bottles, and its header lines up with them.
   await page.locator('nav button[data-scr="shelf"]').click();
   await page.waitForTimeout(250);
@@ -145,32 +208,38 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     }
   }
 
+  step('shop asks its question');
   // 4. Shopping asks its question, and answering it draws something.
   await page.locator('nav button[data-scr="shop"]').click();
   await page.waitForTimeout(250);
   // Back to the question first: an earlier pass through the tabs may have
   // answered it, and the answer is remembered on purpose.
-  const chg = page.locator('#scr-shop .chip').filter({ hasText: 'Change' });
-  if (await chg.count()) { await chg.first().click(); await page.waitForTimeout(300); }
+  //
+  // Guarded on VISIBILITY, not count. #shopBack is built once and then
+  // hidden until a situation is answered, so it is in the DOM on a screen
+  // where it cannot be clicked; a count guard sent Playwright to wait
+  // thirty seconds for an element the app was deliberately hiding.
+  const chg = page.locator('#shopBack').first();
+  if (await chg.isVisible()) { await chg.click(); await page.waitForTimeout(300); }
 
-  const choices = await page.locator('.modechoice').count();
+  const choices = await page.locator('.modetile').count();
   if (choices !== 3) failures.push('shop: ' + choices + ' situations offered, want 3');
   else {
     // Each situation in turn. Reaching the question again means pressing
-    // Change, because the answer is remembered — which is the point of it.
+    // Back, because the answer is remembered — which is the point of it.
     for (let i = 0; i < 3; i++) {
-      if (!(await page.locator('.modechoice').count())) {
-        const back = page.locator('#scr-shop .chip').filter({ hasText: 'Change' });
+      if (!(await page.locator('.modetile').count())) {
+        const back = page.locator('#shopBack');
         if (await back.count()) {
           await back.first().click();
           await page.waitForTimeout(250);
         }
       }
-      if (!(await page.locator('.modechoice').count())) {
+      if (!(await page.locator('.modetile').count())) {
         failures.push('shop: cannot get back to the question');
         break;
       }
-      await page.locator('.modechoice').nth(i).click();
+      await page.locator('.modetile').nth(i).click();
       await page.waitForTimeout(400);
       const body = (await page.locator('#scr-shop').innerText()).trim();
       if (body.length < 40) {
@@ -189,11 +258,11 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
   //     reach it, because it only happens after a real paste into a real
   //     textarea.
   {
-    const chg2 = page.locator('#scr-shop .chip').filter({ hasText: 'Change' });
+    const chg2 = page.locator('#shopBack').first();
     await page.locator('nav button[data-scr="shop"]').click();
     await page.waitForTimeout(250);
-    if (await chg2.count()) { await chg2.first().click(); await page.waitForTimeout(300); }
-    const modes = page.locator('.modechoice');
+    if (await chg2.isVisible()) { await chg2.click(); await page.waitForTimeout(300); }
+    const modes = page.locator('.modetile');
     if ((await modes.count()) === 3) {
       await modes.nth(2).click();               // looking at it on a website
       await page.waitForTimeout(300);
@@ -231,6 +300,7 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     }
   }
 
+  step('a bottle opens from the shelf');
   // 5. A bottle opens from the shelf, which is the commonest thing anybody
   //    does and the one that leaves the tab bar behind.
   await page.locator('nav button[data-scr="shelf"]').click();
@@ -249,6 +319,7 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     if (!backs) failures.push('the bottle screen has no way back');
   }
 
+  step('home tiles hold one row');
   // 6. The six home summary tiles hold one row at every width, and none of
   //    them widens the page.
   //
@@ -305,6 +376,7 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
   }
   await page.setViewportSize({ width: 390, height: 780 });
 
+  step('the log splits, every row has an X');
   // 7. The log: pours on Taste, flights on Flights, and an X on every row.
   //
   //    Three things that can only be checked with a real click. The X calls
@@ -392,6 +464,7 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     }
   }
 
+  step('flight editor host line survives a save');
   // 7. A host line typed into the flight editor is still there after a save.
   //
   //    The line per pour is the only place a flight says anything about a
@@ -440,6 +513,7 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     }
   }
 
+  step('shop: typing survives, buy buys');
   // 8. Shopping: typing survives, the actions are on the glass, buy buys.
   //
   //    Three faults in one screen. renderShop lifted the search row out of
@@ -452,9 +526,9 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
   {
     await page.locator('nav button[data-scr="shop"]').click();
     await page.waitForTimeout(300);
-    const chg3 = page.locator('#scr-shop .chip').filter({ hasText: 'Change' });
-    if (await chg3.count()) { await chg3.first().click(); await page.waitForTimeout(300); }
-    const modes3 = page.locator('.modechoice');
+    const chg3 = page.locator('#shopBack').first();
+    if (await chg3.isVisible()) { await chg3.click(); await page.waitForTimeout(300); }
+    const modes3 = page.locator('.modetile');
     if ((await modes3.count()) !== 3) {
       failures.push('shop: cannot reach the situation question');
     } else {
@@ -566,6 +640,7 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     }
   }
 
+  step('card rows hold one line');
   // 9. A row placed straight into a card lays its controls out on ONE line.
   //
   //    .item is the shelf's seven-column grid, and six screens reuse the
@@ -653,6 +728,7 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     await page.setViewportSize({ width: 390, height: 780 });
   }
 
+  step('shelf sort control and column labels');
   // 10. The shelf: sort control and column labels only once there is a list,
   //     and the headers actually sort it.
   {
@@ -709,6 +785,7 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     await page.setViewportSize({ width: 390, height: 780 });
   }
 
+  step('find it searches');
   // 11. The Find it button, and the tag that is also one.
   {
     await page.locator('nav button[data-scr="shelf"]').click();
@@ -745,15 +822,485 @@ const TABS = ['home', 'shelf', 'shop', 'pour', 'flights', 'map', 'ref'];
     }
   }
 
+  step('backup round-trips');
+  // 12. The backup round-trips through the real buttons.
+  //
+  //     A backup that does not restore is not a backup, and the logic in
+  //     §214 only proves the pair in isolation. This drives Settings: back
+  //     up, wreck the shelf, restore, and check the bottles came back.
+  {
+    await page.evaluate(() => { show('settings'); });
+    await page.waitForTimeout(300);
+    const made = await page.evaluate(() => {
+      /* global S, KEYS, L */
+      const b = L.makeBackup(S, KEYS, Date.now());
+      window.__backup = JSON.stringify(b);
+      return { bottles: (S.bottles || []).length, keys: Object.keys(b.keys).length };
+    });
+    if (made.keys < 15) {
+      failures.push('backup carries only ' + made.keys + ' keys');
+    }
+    const restored = await page.evaluate(() => {
+      const before = (S.bottles || []).length;
+      S.bottles = [];                       // as if the key had been lost
+      const read = L.readBackup(window.__backup, KEYS);
+      if (!read.ok) return 'refused its own backup: ' + read.why;
+      Object.keys(read.keys).forEach(k => { S[k] = read.keys[k]; });
+      return { before: before, after: (S.bottles || []).length };
+    });
+    if (typeof restored === 'string') {
+      failures.push('backup: ' + restored);
+    } else if (restored.after !== restored.before) {
+      failures.push('backup: restored ' + restored.after + ' bottles of '
+        + restored.before);
+    }
+    await page.locator('nav button[data-scr="home"]').click();
+    await page.waitForTimeout(200);
+  }
+
+  step('every type tile lists bottles');
+  // 13. Every type tile on the shelf lists bottles.
+  //
+  //     BZ, 2026-09-03: "on the shelf page, the tiles exist, when you click
+  //     on them, nothing happens." Not reproducible here, at either width,
+  //     on any of the twelve — so this walks all of them rather than one,
+  //     and will say which tile if it ever comes back.
+  {
+    for (const w of [390, 900]) {
+      await page.setViewportSize({ width: w, height: 800 });
+      await page.locator('nav button[data-scr="shelf"]').click();
+      await page.waitForTimeout(300);
+      /* Cleared FIRST. The tiles are the untouched state, and an earlier
+         step in this walk clicks one and never puts it back — so counting
+         before resetting counted the list that tile produced, found no
+         tiles, and blamed the shelf. */
+      await page.evaluate(() => {
+        ['types', 'obsc', 'regions', 'bands', 'proofs', 'scars']
+          .forEach(k => { S.filters[k] = []; });
+        S.filters.cask = ''; S.filters.age = '';
+        S.filters.favsOnly = false; S.filters.wishOnly = false;
+        S.shelfSub = null;
+        document.getElementById('q').value = '';
+        renderShelf(); renderShelfFilters();
+      });
+      await page.waitForTimeout(150);
+      const n = await page.locator('#shelfList .tile').count();
+      if (!n) { failures.push('shelf at ' + w + 'px: no type tiles'); continue; }
+      for (let i = 0; i < n; i++) {
+        await page.evaluate(() => {
+          S.filters.types = []; S.shelfSub = null;
+          document.getElementById('q').value = '';
+          renderShelf(); renderShelfFilters();
+        });
+        await page.waitForTimeout(90);
+        const tiles = page.locator('#shelfList .tile');
+        if ((await tiles.count()) <= i) break;
+        const label = (await tiles.nth(i).innerText()).split('\n')[0];
+        await tiles.nth(i).click();
+        await page.waitForTimeout(180);
+        if (!(await page.locator('#shelfList .item').count())) {
+          failures.push('shelf at ' + w + 'px: the ' + label
+            + ' tile listed nothing');
+        }
+      }
+    }
+    await page.setViewportSize({ width: 390, height: 780 });
+  }
+
+  step('home tiles go somewhere, map');
+  // 14. The home tiles go where their number lives, and the map is the way
+  //     to the map. A number you can read and not follow is a dead end.
+  {
+    await page.locator('nav button[data-scr="home"]').click();
+    await page.waitForTimeout(300);
+    const want = [['bottles on the shelf', 'shelf'],
+                  ['open and pourable', 'pour'],
+                  ['different whiskies', 'shelf'],
+                  ['flights designed', 'flights'],
+                  ['flights run', 'flights']];
+    for (const [label, screen] of want) {
+      await page.locator('nav button[data-scr="home"]').click();
+      await page.waitForTimeout(200);
+      const tile = page.locator('#homeBody > .tiles > button.tile')
+        .filter({ hasText: label });
+      if (!(await tile.count())) {
+        failures.push('home: "' + label + '" is not tappable');
+        continue;
+      }
+      await tile.first().click();
+      await page.waitForTimeout(300);
+      const on = await page.evaluate(n =>
+        document.getElementById('scr-' + n).classList.contains('on'), screen);
+      if (!on) failures.push('home: "' + label + '" did not open ' + screen);
+    }
+    // The shelf value names no screen and must stay a label.
+    await page.locator('nav button[data-scr="home"]').click();
+    await page.waitForTimeout(200);
+    const val = page.locator('#homeBody > .tiles > button.tile')
+      .filter({ hasText: 'shelf value at MSRP' });
+    if (await val.count()) {
+      failures.push('home: the shelf value is tappable but goes nowhere');
+    }
+    // The map opens the map, and the chip that used to say so is gone.
+    const mapBtn = page.locator('#homeBody button.mapwrap');
+    if (!(await mapBtn.count())) {
+      failures.push('home: the map is not the way to the map');
+    } else {
+      if (await page.locator('#homeBody button', { hasText: 'Open the map' })
+            .count()) {
+        failures.push('home: the Open the map chip is still there');
+      }
+      await mapBtn.first().click();
+      await page.waitForTimeout(300);
+      if (!(await page.evaluate(() =>
+          document.getElementById('scr-map').classList.contains('on')))) {
+        failures.push('home: pressing the map did not open the map');
+      }
+    }
+  }
+
+  step('time for a taste holds its height');
+  // 15. Time for a taste holds its height. It swung 466 -> 482 -> 417 as a
+  //     pour name wrapped to two lines instead of three, and a machine that
+  //     resizes under your thumb reads as the app stumbling.
+  {
+    await page.locator('nav button[data-scr="pour"]').click();
+    await page.waitForTimeout(300);
+    const heights = [];
+    for (let i = 0; i < 6; i++) {
+      heights.push(await page.evaluate(() => Math.round(
+        document.querySelector('.machine').getBoundingClientRect().height)));
+      await page.locator('#spinBtn').click();
+      await page.waitForTimeout(700);
+    }
+    const spread = Math.max.apply(null, heights) - Math.min.apply(null, heights);
+    if (spread > 2) {
+      failures.push('the taste box moved ' + spread + 'px across spins: '
+        + heights.join(', '));
+    }
+  }
+
+  step('home tiles lead somewhere');
+  // 14. The home tiles go where their number lives.
+  {
+    await page.locator('nav button[data-scr="home"]').click();
+    await page.waitForTimeout(300);
+    const want = { 'bottles on the shelf': 'shelf', 'open and pourable': 'pour',
+                   'different whiskies': 'shelf', 'flights designed': 'flights',
+                   'flights run': 'flights' };
+    for (const label of Object.keys(want)) {
+      const tile = page.locator('#homeBody > .tiles > button.tile')
+        .filter({ hasText: label });
+      if (!(await tile.count())) {
+        failures.push('home: "' + label + '" is not tappable');
+        continue;
+      }
+      await tile.first().click();
+      await page.waitForTimeout(250);
+      const on = await page.evaluate(() => {
+        const s = document.querySelector('.screen.on');
+        return s ? s.id.replace('scr-', '') : null;
+      });
+      if (on !== want[label]) {
+        failures.push('home: "' + label + '" opened ' + on
+          + ', want ' + want[label]);
+      }
+      await page.locator('nav button[data-scr="home"]').click();
+      await page.waitForTimeout(200);
+    }
+    // The shelf value is not a place, so it stays a label.
+    const notATile = await page.locator('#homeBody > .tiles > button.tile')
+      .filter({ hasText: 'shelf value at MSRP' }).count();
+    if (notATile) failures.push('home: the shelf value should not be a button');
+
+    /* The two chart lanes end near each other. column-count balances by
+       total height, which cannot help when one card is taller than the
+       rest together: By type has thirteen rows against Recognition's
+       three, and the right lane stopped half way up the page. */
+    const lanes = await page.evaluate(() => {
+      if (window.innerWidth < 700) return null;   // one lane below the break
+      const c = [...document.querySelectorAll('#homeCharts .chartcol')];
+      return c.length === 2
+        ? c.map(x => Math.round(x.getBoundingClientRect().height)) : c.length;
+    });
+    if (lanes && typeof lanes !== 'number') {
+      const gap = Math.abs(lanes[0] - lanes[1]);
+      const tallest = Math.max(lanes[0], lanes[1]);
+      // A third of the taller lane. Cards cannot be split, so they will
+      // never be equal; a lane ending half way up the page is the fault.
+      if (gap > tallest / 3) {
+        failures.push('home charts: lanes are ' + lanes.join(' and ')
+          + ' tall, ' + gap + 'px apart');
+      }
+    } else if (typeof lanes === 'number') {
+      failures.push('home charts: ' + lanes + ' lanes, want 2');
+    }
+
+    // The map IS the button; the chip that used to say so is gone.
+    const map = page.locator('#homeBody button.mapwrap');
+    if (!(await map.count())) {
+      failures.push('home: the map is not tappable');
+    } else {
+      await map.first().click();
+      await page.waitForTimeout(250);
+      const on = await page.evaluate(() =>
+        (document.querySelector('.screen.on') || {}).id);
+      if (on !== 'scr-map') failures.push('home: the map opened ' + on);
+      await page.locator('nav button[data-scr="home"]').click();
+      await page.waitForTimeout(200);
+    }
+    if (await page.locator('#homeBody button', { hasText: 'Open the map' }).count()) {
+      failures.push('home: the Open the map chip is still there');
+    }
+  }
+
+  step('bottle controls sit in their sections');
+  // 15. The bottle screen: one control per section, and Shop's two ways
+  //     out on one line.
+  {
+    await page.setViewportSize({ width: 390, height: 780 });
+    await page.evaluate(() => { S.lookupUrl = 'http://app.local/lookup'; });
+    await page.locator('nav button[data-scr="shelf"]').click();
+    await page.waitForTimeout(300);
+    if (await page.locator('#shelfList .tile').count()) {
+      await page.locator('#shelfList .tile').first().click();
+      await page.waitForTimeout(200);
+    }
+    await page.locator('#shelfList .item').first().click();
+    await page.waitForTimeout(350);
+
+    const top = await page.evaluate(() =>
+      [...document.querySelectorAll('#scr-detail .detail-acts button')]
+        .filter(b => !b.hidden).map(b => b.textContent.trim()));
+    // The row that held nine controls and wrapped to three lines on a phone.
+    if (top.length !== 1) {
+      failures.push('bottle: the top row holds ' + top.length
+        + ' controls (' + top.join(', ') + '), want the way back only');
+    }
+
+    const placed = await page.evaluate(() => {
+      const out = {};
+      document.querySelectorAll('#detailBody .sheet').forEach(c => {
+        const head = (c.querySelector('h3') || c.querySelector('h2') || {})
+          .textContent || '';
+        [...c.querySelectorAll('.sectionacts button, .chip, .favstar')]
+          .forEach(b => { out[b.textContent.trim()] = head; });
+      });
+      return out;
+    });
+    const wantIn = (label, head) => {
+      const got = Object.keys(placed).filter(l => l.indexOf(label) === 0)[0];
+      if (!got) { failures.push('bottle: no "' + label + '" anywhere'); return; }
+      if (placed[got].indexOf(head) < 0) {
+        failures.push('bottle: "' + got + '" sits under ' + placed[got]
+          + ', want ' + head);
+      }
+    };
+    wantIn('Pour it', 'Your bottle');
+    // The filing key must never be on the screen.
+    const ids = await page.evaluate(() => {
+      const c = [...document.querySelectorAll('#detailBody .sheet')]
+        .filter(x => /Your bottle|bottles$/.test(
+          ((x.querySelector('h3') || {}).textContent || '')))[0];
+      return c ? /\bB\d{3,}\b/.test(c.innerText) : false;
+    });
+    if (ids) failures.push('bottle: the internal id is on the screen');
+    wantIn('Find it', 'Your bottle');
+    wantIn('+ Another bottle', 'Your bottle');
+    wantIn('Edit', '');            // under the bottle's own details card
+    wantIn('Delete', '');
+    // A bottle with notes has no notes lookup; one without must have it.
+    const noteCase = await page.evaluate(() => {
+      const p = Object.values(S.catalog).filter(x => L.noteGaps(x).length)[0];
+      if (!p) return 'none missing notes';
+      showBottle(p.k);
+      const labels = [...document.querySelectorAll('#detailBody .sheet')]
+        .filter(c => /Tasting notes/.test((c.querySelector('h3') || {}).textContent || ''))
+        .flatMap(c => [...c.querySelectorAll('button')].map(b => b.textContent.trim()));
+      return labels.join(', ');
+    });
+    if (typeof noteCase === 'string' && noteCase.indexOf('Look up notes') < 0) {
+      failures.push('bottle with no notes: the notes card offers ' + noteCase);
+    }
+
+    // Shop: Home and Back on one line, not stacked.
+    await page.locator('nav button[data-scr="shop"]').click();
+    await page.waitForTimeout(250);
+    if (await page.locator('.modetile').count()) {
+      await page.locator('.modetile').first().click();
+      await page.waitForTimeout(350);
+    }
+    /* Away and back, four times. The button was BUILT on every render into
+       a header this screen never clears, so they piled up — three, four,
+       five chevrons across the top — and labelBacks renamed the survivors
+       to "Home" because it carried the class that means "follow the
+       trail". One of it, saying Back, however often you leave and return. */
+    for (let i = 0; i < 4; i++) {
+      await page.locator('nav button[data-scr="home"]').click();
+      await page.waitForTimeout(120);
+      await page.locator('nav button[data-scr="shop"]').click();
+      await page.waitForTimeout(200);
+    }
+    const stacked = await page.evaluate(() => ({
+      backs: document.querySelectorAll('#shopBack').length,
+      visible: [...document.querySelectorAll('#scr-shop .hdr button')]
+        .filter(b => !b.hidden).map(b => b.textContent.trim())
+    }));
+    if (stacked.backs !== 1) {
+      failures.push('shop: ' + stacked.backs + ' back buttons after navigating');
+    }
+    if (stacked.visible.filter(l => /Back/.test(l)).length !== 1) {
+      failures.push('shop: the header reads ' + stacked.visible.join(', '));
+    }
+    // And it is gone once there is no situation to go back from.
+    await page.locator('#shopBack').click();
+    await page.waitForTimeout(300);
+    const onQuestion = await page.evaluate(() =>
+      [...document.querySelectorAll('#scr-shop .hdr button')]
+        .filter(b => !b.hidden).map(b => b.textContent.trim()));
+    if (onQuestion.some(l => /Back/.test(l))) {
+      failures.push('shop: Back still shows on the question screen');
+    }
+    await page.locator('.modetile').first().click();
+    await page.waitForTimeout(300);
+
+    const hdr = await page.evaluate(() => {
+      const bs = [...document.querySelectorAll('#scr-shop .hdr button')]
+        .filter(b => !b.hidden);
+      if (bs.length < 2) return { n: bs.length };
+      const a = bs[0].getBoundingClientRect(), b = bs[1].getBoundingClientRect();
+      return { n: bs.length, sameLine: Math.abs(a.top - b.top) < 2,
+               labels: bs.map(x => x.textContent.trim()) };
+    });
+    if (hdr.n >= 2 && !hdr.sameLine) {
+      failures.push('shop: ' + hdr.labels.join(' and ') + ' are on two lines');
+    }
+  }
+
+  step('suggestions open bottles, wishlist reachable');
+  // 16. A category suggestion opens bottles, and the wishlist is reachable.
+  {
+    await page.setViewportSize({ width: 1000, height: 900 });
+    await page.evaluate(() => {
+      S.wish = [{ name: 'Longrow 18', added: '2026-09-01', reason: 'Peated' }];
+      save_();
+    });
+    await page.locator('nav button[data-scr="shop"]').click();
+    await page.waitForTimeout(250);
+    const back0 = page.locator('#shopBack');
+    if (await back0.count() && !(await back0.first().isHidden())) {
+      await back0.first().click(); await page.waitForTimeout(250);
+    }
+    const modes = page.locator('.modetile');
+    if ((await modes.count()) > 1) {
+      await modes.nth(1).click();            // deciding what to buy next
+      await page.waitForTimeout(600);
+    }
+    /* An ask is a CATEGORY — "A World worth owning" — and it used to be
+       typed into the search box and looked up as though it were a bottle
+       name. The lookup failed, and the screen then offered a verdict, an
+       Edit form and a Want it button for a whisky that does not exist. */
+    // Emptied first: an earlier step types a bottle name in here, and the
+    // point of this check is that clicking a CATEGORY does not put one in.
+    await page.evaluate(() => { document.getElementById('shopQ').value = ''; });
+    const asks = page.locator('#scr-shop .item .nm');
+    if (await asks.count()) {
+      const label = (await asks.first().innerText()).trim();
+      await asks.first().click();
+      await page.waitForTimeout(500);
+      const after = await page.evaluate(() => ({
+        modal: document.getElementById('overlay').classList.contains('on'),
+        box: document.getElementById('shopQ').value
+      }));
+      if (!after.modal) {
+        failures.push('shop: the suggestion "' + label + '" opened no bottles');
+      }
+      if (after.box) {
+        failures.push('shop: the suggestion put ' + JSON.stringify(after.box)
+          + ' in the search box as if it were a bottle');
+      }
+      await page.evaluate(() => closeModal());
+      await page.waitForTimeout(200);
+    }
+
+    /* The wishlist is ON the search screen, not only behind a chip: this
+       is what you open standing in a shop with nothing typed, which is
+       exactly when the question is what you meant to buy. */
+    await page.evaluate(() => {
+      S.shopMode = 'store';
+      document.getElementById('shopQ').value = '';
+      renderShop();
+    });
+    await page.waitForTimeout(300);
+    const onSearch = await page.evaluate(() =>
+      [...document.querySelectorAll('#scr-shop .sheet h3')]
+        .map(h => h.textContent));
+    if (!onSearch.some(h => /wishlist/i.test(h))) {
+      failures.push('shop: the search screen shows ' + onSearch.join(', ')
+        + ' and no wishlist');
+    }
+    // One tap from there to the bottle, not two.
+    const row = page.locator('#scr-shop .item').first();
+    if (await row.count()) {
+      await row.click();
+      await page.waitForTimeout(400);
+      const landed = await page.evaluate(() => ({
+        box: document.getElementById('shopQ').value,
+        mode: S.shopMode
+      }));
+      if (!landed.box) failures.push('shop: tapping a wanted bottle typed nothing');
+      if (landed.mode !== 'store') {
+        failures.push('shop: tapping a wanted bottle left the mode as '
+          + landed.mode);
+      }
+      await page.evaluate(() => {
+        document.getElementById('shopQ').value = ''; renderShop();
+      });
+      await page.waitForTimeout(200);
+    }
+
+    // The wishlist, from a shop rather than only from the planning screen.
+    const chip = page.locator('#shopWish');
+    if (!(await chip.count())) {
+      failures.push('shop: no way to see the wishlist');
+    } else {
+      const label = (await chip.first().innerText()).trim();
+      if (!/\d/.test(label)) {
+        failures.push('shop: the wishlist chip reads ' + JSON.stringify(label));
+      }
+      await chip.first().click();
+      await page.waitForTimeout(300);
+      const rows = await page.evaluate(() =>
+        [...document.querySelectorAll('.modal .item .nm')].map(x => x.textContent));
+      if (!rows.length) failures.push('shop: the wishlist opened empty');
+      await page.evaluate(() => closeModal());
+      await page.waitForTimeout(200);
+    }
+  }
+
   await browser.close();
 
+  endStep();
   if (failures.length) {
     failures.forEach(f => console.log('  \u2717 ' + f));
     console.log('  \u2716 ' + failures.length + ' failure(s) in a real browser');
     process.exit(1);
   }
-  console.log('  \u2713 loads, every tab draws, nav holds, shelf lists, shop asks, tiles hold one row, log splits, shop types and buys, card rows hold one line, headers sort, find it searches');
+  console.log('  \u2713 loads, every screen draws, nav holds, shelf lists, shop asks, tiles hold one row, log splits, shop types and buys, card rows hold one line, headers sort, find it searches, backup restores, tiles go somewhere, tiles lead somewhere, bottle controls sit in their sections, suggestions open bottles');
 })().catch(e => {
-  console.log('  \u2716 the browser check itself failed: ' + e.message.split('\n')[0]);
+  /* Name the step and keep the stack. This used to print one line and throw
+     the rest away, which turned every failure into a thirty-second timeout
+     with nothing to read. */
+  /* Everything found BEFORE the crash is still worth reading; it used to
+     die holding all of it. */
+  if (_found && _found.length) {
+    console.log('\n  found before the crash:');
+    _found.forEach(f => console.log('    \u2716 ' + f));
+  }
+  console.log('  \u2716 the walk died in: ' + (_step || 'setup'));
+  console.log('    ' + e.message.split('\n')[0]);
+  const where = (e.stack || '').split('\n').filter(l => /browser|\.js:/.test(l))
+    .slice(0, 3).map(l => '    ' + l.trim()).join('\n');
+  if (where) console.log(where);
   process.exit(1);
 });
