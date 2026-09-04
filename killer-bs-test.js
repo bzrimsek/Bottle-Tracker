@@ -7236,6 +7236,38 @@ sec('§232 the portrait a shelf earns');
      own shelf with no number in it is an opinion. */
   eq('every line of the story has a number in it',
     pxP.lines.every(l => /\d/.test(l.text)), true);
+
+  /* One line, one line long. A story sentence that wraps reads as two
+     thoughts. The budget is tuned to the portrait card at a desktop width
+     and cannot hold on a phone, but it stops a line being long anywhere:
+     the repeat line ran to 148 characters because it named a bottle called
+     "Barrell Craft Spirits Cigar Blend Bourbon Whiskey". */
+  eq('no line of the story overruns its budget',
+    pxP.lines.every(l => l.text.length <= L.LINE_BUDGET), true);
+  eq('and none of them ends in an ellipsis',
+    pxP.lines.every(l => !/\u2026$/.test(l.text)), true);
+
+  /* A long real shelf is the case that broke it, so it is the case tested:
+     the shorter form is chosen rather than the sentence being cut. */
+  const wordy = mk(40, i => ({
+    name: 'Barrell Craft Spirits Cigar Blend Bourbon Whiskey ' + i,
+    dist: 'A Distillery With A Very Long Name Indeed',
+    fin: 'Pedro Ximenez', proof: 120 + (i % 9), age: 10 + (i % 12) }));
+  wordy.bs = wordy.bs.concat(wordy.bs.slice(0, 14));   // fourteen repeats
+  const long = L.shelfPortrait(wordy.cat, wordy.bs, {});
+  eq('a wordy shelf still keeps every line inside the budget',
+    long.lines.every(l => l.text.length <= L.LINE_BUDGET), true);
+  eq('and still says something on every line',
+    long.lines.every(l => l.text.length > 20), true);
+
+  eq('a line that fits is left alone',
+    L.fitLine('short enough', 'shorter'), 'short enough');
+  eq('a line that does not is swapped, not cut',
+    L.fitLine('x'.repeat(L.LINE_BUDGET + 1), 'the short form'),
+    'the short form');
+  eq('a short form that is no shorter is not used',
+    L.fitLine('y'.repeat(L.LINE_BUDGET + 1), 'z'.repeat(L.LINE_BUDGET + 5)),
+    'y'.repeat(L.LINE_BUDGET + 1));
   eq('the story is not empty', pxP.lines.length > 0, true);
 
   /* Runners-up are titles that were also earned, never filler. */
@@ -7348,6 +7380,30 @@ sec('§233 six axes, no total');
     steps.filter(x => /thinnest/.test(x.text)).length, 1);
   eq('each step names something to go and find',
     steps.every(x => x.want && x.want.length > 1), true);
+  /* BZ: "i have all 6 regions btw" — and he did. The axis measures what is
+     COMPARABLE, and two of his regions hold one bottle each, so "4 of 6
+     Scotch regions" read as four regions on a shelf holding all six. Right
+     number, wrong word, which is the sealed fault again. */
+  eq('the wording says what is being measured',
+    /with enough to compare/.test(steps[0].text), true);
+  const started = L.shelfNextSteps([{ id: 'origin', label: 'Origin', pct: 67,
+    have: 4, total: 6, of: 'Scotch regions',
+    missing: ['Campbeltown'],
+    gaps: [{ name: 'Campbeltown', n: 1, short: 2 }] }], 1)[0];
+  eq('a region you have started is not called absent',
+    /where you have 1/.test(started.text), true);
+  eq('and it says how many more make it a comparison',
+    /2 more make it a comparison/.test(started.text), true);
+  const oneShort = L.shelfNextSteps([{ id: 'origin', label: 'Origin', pct: 67,
+    have: 4, total: 6, of: 'Scotch regions', missing: ['Lowland'],
+    gaps: [{ name: 'Lowland', n: 2, short: 1 }] }], 1)[0];
+  eq('one more agrees with its verb',
+    /1 more makes it a comparison/.test(oneShort.text), true);
+  const none = L.shelfNextSteps([{ id: 'age', label: 'Age', pct: 71,
+    have: 5, total: 7, of: 'age tiers', missing: ['25'],
+    gaps: [{ name: '25', n: 0, short: 3 }] }], 1)[0];
+  eq('something you own none of is still a plain gap',
+    /Nearest gap: 25/.test(none.text), true);
   eq('and capitalises it', /^[A-Z0-9]/.test(steps[0].want), true);
   eq('a complete axis is not in the roadmap',
     L.shelfNextSteps([{ id: 'x', label: 'X', pct: 100, have: 3, total: 3,
@@ -7370,6 +7426,44 @@ sec('§233 six axes, no total');
     { id: 'b', label: 'B', pct: 100 }], 100);
   eq('a zero axis is still given a visible point',
     zero[0].y < 0 && zero[0].y > -20, true);
+
+  /* BZ: "if I want to change the shape of my graph I would click a data
+     point and get a list and then shop for that bottle." The list behind an
+     axis and the roadmap sentence say the same thing about the same gap,
+     from one function, so they cannot drift (rule 30a). */
+  eq('a started gap credits what you already hold',
+    L.axisGapLine({ name: 'Campbeltown', n: 1, short: 2 }),
+    'You have 1 \u2014 2 more make it a comparison.');
+  eq('one short agrees with its verb',
+    /1 more makes it/.test(L.axisGapLine({ n: 2, short: 1 })), true);
+  eq('something you own none of says so plainly',
+    L.axisGapLine({ n: 0, short: 3 }), 'Nothing on the shelf yet.');
+  eq('a missing gap is not an error',
+    L.axisGapLine(null), 'Nothing on the shelf yet.');
+
+  /* Every gap an axis reports has to be openable, so every one needs a
+     name and a count. */
+  const originAx = L.shelfAxes(broad.cat, broad.bs)
+    .filter(a => a.id === 'origin')[0];
+  eq('every gap carries a name',
+    originAx.gaps.every(g => typeof g.name === 'string' && g.name.length),
+    true);
+  eq('and how many you hold',
+    originAx.gaps.every(g => typeof g.n === 'number'), true);
+  eq('and how many more it needs',
+    originAx.gaps.every(g => g.short >= 0 && g.short <= 3), true);
+  eq('the names line up with the missing list',
+    originAx.gaps.map(g => g.name).join('|'), originAx.missing.join('|'));
+  /* A band gap is named by its label, not stringified from its object —
+     "[object Object]" reached the screen once. */
+  const strengthAx = L.shelfAxes(broad.cat, broad.bs)
+    .filter(a => a.id === 'strength')[0];
+  eq('a proof band is named, not stringified',
+    strengthAx.gaps.every(g => !/object Object/.test(g.name)), true);
+  const smokeAx = L.shelfAxes(broad.cat, broad.bs)
+    .filter(a => a.id === 'smoke')[0];
+  eq('a peat level is named in words',
+    smokeAx.gaps.every(g => !/^\d+$/.test(g.name)), true);
 
   eq('the path closes', /Z$/.test(L.radarPath(pts)), true);
   eq('and starts with a move', /^M/.test(L.radarPath(pts)), true);

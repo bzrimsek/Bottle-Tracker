@@ -1177,6 +1177,54 @@ function step(n) {
     }
   }
 
+  /* 17. Every dimension pill draws its screen.
+   *
+   *    Nothing pressed one, which is how "renderAxis is not defined"
+   *    reached BZ's phone on a build where audit, 2051 assertions, the
+   *    sync cycle, the render check and this walk were all green. The
+   *    function had been deleted with the one above it and no check
+   *    opened the screen that calls it. */
+  step('every dimension pill draws');
+  {
+    await page.locator('nav button[data-scr="shop"]').click();
+    await page.waitForTimeout(300);
+    /* Back to the question FIRST. Shop remembers the last answer, so this
+       step arrived in store mode, where the same pills exist and pressing
+       one legitimately leaves the scroll pane empty — nothing is typed yet.
+       Eight false failures came from checking planning-mode output on the
+       store screen. */
+    const back = page.locator('#shopBack').first();
+    if (await back.isVisible()) { await back.click(); await page.waitForTimeout(300); }
+    const tiles = page.locator('.modetile');
+    if ((await tiles.count()) === 3) {
+      await tiles.nth(1).click();               // deciding what to buy next
+      await page.waitForTimeout(450);
+    } else {
+      failures.push('dimensions: could not reach the planning screen');
+    }
+    const pills = page.locator('.dimrow .chip');
+    const n = await pills.count();
+    if (!n) {
+      failures.push('dimensions: no pills on the planning screen');
+    }
+    for (let i = 0; i < n; i++) {
+      const label = (await pills.nth(i).textContent() || '').trim();
+      // A page error lands in `failures` via the pageerror handler at the
+      // top; there is no separate errors array, and referring to one threw
+      // inside the check itself.
+      const before = failures.length;
+      await pills.nth(i).click();
+      await page.waitForTimeout(350);
+      const drew = await page.evaluate(() =>
+        document.querySelectorAll('#shopScroll .sheet').length);
+      if (failures.length > before) {
+        failures.push('dimension "' + label + '" is the one that threw');
+      } else if (!drew) {
+        failures.push('dimension "' + label + '" drew nothing');
+      }
+    }
+  }
+
   step('suggestions open bottles, wishlist reachable');
   // 16. A category suggestion opens bottles, and the wishlist is reachable.
   {
