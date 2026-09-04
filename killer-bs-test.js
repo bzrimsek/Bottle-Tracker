@@ -6165,5 +6165,64 @@ sec('§216 a path is not a key');
     L.pendingForLibrary({ [p.k]: p }, landed), []);
 }
 
+/* §217  two lookups, because they belong to two cards -----------------
+ *
+ * One Look up filled the notes AND the proof and the price. Once every
+ * control moved under the thing it acts on, that button had to live in one
+ * section while quietly changing another — which is the arrangement the
+ * move was undoing.
+ *
+ * Two now: notes on the tasting-notes card, facts under the bottle's own
+ * details. One lookup call either way; this only decides which fields are
+ * taken from the answer, and the halves must not overlap or pressing Look
+ * up notes would change the price.
+ */
+sec('§217 the notes lookup and the facts lookup');
+{
+  const bare = { k: 'X', name: 'X' };
+  eq('a bottle with nothing has both kinds of gap',
+    [L.noteGaps(bare), L.factGaps(bare)],
+    [['tasting notes'], ['proof', 'age', 'price', 'cask', 'distillery']]);
+  eq('and bottleGaps still reads as the whole list, notes first',
+    L.bottleGaps(bare),
+    ['tasting notes', 'proof', 'age', 'price', 'cask', 'distillery']);
+
+  const noted = { k: 'X', name: 'X', tn: { nose: 'smoke' }, proof: 92 };
+  eq('notes present, so no note gap', L.noteGaps(noted), []);
+  eq('and the facts it has are not asked for again',
+    L.factGaps(noted), ['age', 'price', 'cask', 'distillery']);
+
+  /* A flight-card prompt is not a description of the whisky, so it still
+     counts as missing notes — the rule that pulled 185 bottles' prompts
+     off the bottle screen in the first place. */
+  eq('a flight prompt still leaves the notes missing',
+    L.noteGaps({ tn: { nose: 'deeper than the one before it' },
+                 tnFrom: 'PEAT IS A POSTCODE' }), ['tasting notes']);
+
+  /* THE SPLIT. One answer, two buttons, and neither may take the other's
+     half — or the button under the notes card silently rewrites the price. */
+  const take = { tn: { nose: 'n' }, tnFrom: null, tnSrc: 'model',
+                 proof: 92, msrp: 60 };
+  eq('the notes button takes only the notes',
+    Object.keys(L.takeFor(take, 'notes')).sort(),
+    ['tn', 'tnFrom', 'tnSrc']);
+  eq('the facts button takes only the facts',
+    Object.keys(L.takeFor(take, 'facts')).sort(), ['msrp', 'proof']);
+  eq('and between them they take all of it',
+    Object.keys(L.takeFor(take, 'notes')).length
+      + Object.keys(L.takeFor(take, 'facts')).length,
+    Object.keys(take).length);
+
+  // Nothing for this half means nothing, rather than an empty write that
+  // reports success.
+  eq('a facts-only answer gives the notes button nothing',
+    L.takeFor({ proof: 92 }, 'notes'), null);
+  eq('a notes-only answer gives the facts button nothing',
+    L.takeFor({ tn: { nose: 'n' } }, 'facts'), null);
+  eq('and tnFrom alone is not a note worth writing',
+    L.takeFor({ tnFrom: null }, 'notes'), null);
+  eq('nothing at all', L.takeFor(null, 'facts'), null);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
