@@ -7780,21 +7780,36 @@ sec('§237 the buy-against-drink quadrants');
   add('A', 2, 4); add('B', 2, 0); add('C', 1, 5);
   add('D', 1, 0); add('E', 2, 1); add('F', 1, 3);
 
+  /* Poured values above zero are 1,3,4,5. The upper quartile is the
+     fourth of four, which is 5, and the floor of 2 does not bite. So the
+     line is 5 and only C clears it.
+
+     The median was the first rule and it came out at 1 on BZ's real
+     shelf, because most whiskies have been poured exactly once — which
+     put 179 of 326 in Discoveries and called more than half the shelf
+     often-poured. Poured once is the first taste, not a habit. */
   const q = L.buyVsDrink(cat, bottles, [], hist);
-  eq('the line is the shelf\u2019s own middle', q.line, 4);
+  eq('the line is the shelf\u2019s upper quartile', q.line, 5);
   eq('six whiskies counted', q.counted, 6);
   eq('four of them have ever been poured', q.pouredAny, 4);
 
-  eq('bought again and poured often is a staple', q.staples.length, 1);
-  eq('and it is the right one', q.staples[0].k, 'A');
-  eq('bought again and poured rarely is stockpile', q.stockpile.length, 2);
-  eq('bought once and poured often is a discovery', q.discoveries.length, 1);
+  eq('nothing clears the line and is bought again', q.staples.length, 0);
+  eq('three are bought again and poured rarely', q.stockpile.length, 3);
+  eq('one is bought once and poured often', q.discoveries.length, 1);
   eq('and it is the right one', q.discoveries[0].k, 'C');
   eq('the rest are the long tail', q.tail.length, 2);
-  /* Three pours is below a line of four, so F is tail and not a
-     discovery. The line is a median, not a guess. */
+  /* Four pours is below a line of five, so A is stockpile not a staple. */
   eq('a whisky just under the line is not often-poured',
-    q.tail.some(r => r.k === 'F'), true);
+    q.stockpile.some(r => r.k === 'A'), true);
+  /* And a single pour never counts as often, whatever the quartile says:
+     the floor is 2. */
+  const thin = L.buyVsDrink(
+    { x: { k: 'x', name: 'X' }, y: { k: 'y', name: 'Y' } },
+    [{ k: 'x', status: 'open' }, { k: 'y', status: 'open' }],
+    [], [{ kind: 'pour', pours: ['x'] }]);
+  eq('one pour is never often', thin.line, 2);
+  eq('so a once-poured whisky is not a discovery',
+    thin.discoveries.length, 0);
 
   /* Every whisky lands in exactly one quadrant, or the picture lies. */
   const all = q.staples.concat(q.stockpile, q.discoveries, q.tail);
