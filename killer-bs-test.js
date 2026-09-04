@@ -7158,9 +7158,13 @@ sec('§231 what belongs on the already-yours card');
     { kind: 'flight', name: 'A flight needs this bought', owned: false }
   ];
   const own = L.ownFindings(gaps);
-  eq('two findings are actionable on the shelf itself', own.length, 2);
-  eq('the sealed bottle upstairs is one', own[0].name, 'Longrow 18');
-  eq('and your own wishlist is the other', own[1].kind, 'wish');
+  /* Owned only. A wishlist entry was in here too, which put one bottle on
+     this card while it already sat on the wishlist card — saying nothing
+     in either place. */
+  eq('one finding is actionable on the shelf itself', own.length, 1);
+  eq('and it is the sealed bottle upstairs', own[0].name, 'Longrow 18');
+  eq('the wishlist is not repeated here',
+    own.some(g => g.kind === 'wish'), false);
   eq('a region gap is not on this card',
     own.some(g => g.kind === 'region'), false);
   eq('nor a category gap',
@@ -7172,6 +7176,11 @@ sec('§231 what belongs on the already-yours card');
     own.some(g => g.name === 'A flight needs this bought'), false);
   eq('an empty list is not an error', L.ownFindings([]).length, 0);
   eq('a missing list is not an error either', L.ownFindings(null).length, 0);
+  /* And when nothing is upstairs the card has nothing to say, which is a
+     real state rather than an empty shelf to apologise for. */
+  eq('a shelf with nothing upstairs yields nothing',
+    L.ownFindings([{ kind: 'region', name: 'A Lowland Scotch' },
+                   { kind: 'wish', name: 'Something wanted' }]).length, 0);
 }
 
 /* §232  the story the shelf tells ------------------------------------
@@ -7250,6 +7259,122 @@ sec('§232 the portrait a shelf earns');
   gone.bs.forEach(b => { b.status = 'gone'; });
   eq('a shelf of gone bottles has no story',
     L.shelfPortrait(gone.cat, gone.bs, {}), null);
+}
+
+/* §233  the shape of a shelf ------------------------------------------
+ *
+ * BZ wanted a score with a roadmap, then: "maybe a spider diagram of
+ * sorts?" Six axes and no total, because a single number has to trade
+ * breadth against depth and a shelf ranked by how much is on it is a
+ * ranking of who has more money.
+ *
+ * Every axis is COVERAGE, and covered means THREE — one Lowland is a
+ * bottle, three is a comparison, which is the threshold gapsFromThinness
+ * already used and the reason the flights exist. A "has at least one" rule
+ * scored BZ's shelf 100% on five of six axes, which is a picture with
+ * nothing in it.
+ *
+ * Geometry by hand before the assertions: four axes at 100%, r=100, first
+ * axis at twelve o'clock going clockwise —
+ *   i=0 -> (0,-100)   i=1 -> (100,0)   i=2 -> (0,100)   i=3 -> (-100,0)
+ */
+sec('§233 six axes, no total');
+{
+  const shelf = (spec) => {
+    const cat = {}, bs = [];
+    let i = 0;
+    spec.forEach(([n, props]) => {
+      for (let j = 0; j < n; j++, i++) {
+        cat['k' + i] = Object.assign({ k: 'k' + i, name: 'W' + i,
+          dist: 'H', sub: 'bourbon', proof: 95 }, props);
+        bs.push({ k: 'k' + i, status: 'open' });
+      }
+    });
+    return { cat: cat, bs: bs };
+  };
+
+  eq('an empty shelf has no shape', L.shelfAxes({}, []), null);
+
+  /* Two bourbons is not coverage; three is. */
+  const two = shelf([[2, {}]]);
+  const twoAx = L.shelfAxes(two.cat, two.bs)
+    .filter(a => a.id === 'breadth')[0];
+  eq('two of a category does not cover it', twoAx.have, 0);
+  const three = shelf([[3, {}]]);
+  const threeAx = L.shelfAxes(three.cat, three.bs)
+    .filter(a => a.id === 'breadth')[0];
+  eq('three does', threeAx.have, 1);
+  eq('out of the nine worth covering', threeAx.total, 9);
+  eq('and the percentage follows', threeAx.pct, 11);
+  eq('the rest are named as missing', threeAx.missing.length, 8);
+  eq('bourbon is not among them',
+    threeAx.missing.indexOf('bourbon'), -1);
+
+  /* Coverage, not size: a small broad shelf beats a big narrow one. This
+     is the claim the whole design rests on. */
+  const narrow = shelf([[300, {}]]);
+  const broad = shelf([[3, { sub: 'bourbon' }], [3, { sub: 'rye' }],
+                       [3, { sub: 'scotch' }], [3, { sub: 'irish' }]]);
+  const nb = L.shelfAxes(narrow.cat, narrow.bs)
+    .filter(a => a.id === 'breadth')[0];
+  const bb = L.shelfAxes(broad.cat, broad.bs)
+    .filter(a => a.id === 'breadth')[0];
+  eq('three hundred of one thing covers one category', nb.have, 1);
+  eq('twelve bottles across four covers four', bb.have, 4);
+  eq('so the smaller shelf scores higher on breadth', bb.pct > nb.pct, true);
+
+  /* Six axes, and no total anywhere in what comes back. */
+  const ax = L.shelfAxes(broad.cat, broad.bs);
+  eq('there are six axes', ax.length, 6);
+  eq('and no total among them',
+    ax.some(a => /total|score|overall/i.test(a.id)), false);
+  eq('every axis names what it counts',
+    ax.every(a => typeof a.of === 'string' && a.of.length > 2), true);
+  eq('every percentage is a percentage',
+    ax.every(a => a.pct >= 0 && a.pct <= 100), true);
+
+  /* A gone bottle cannot cover anything. */
+  const gone = shelf([[3, { sub: 'rye' }]]);
+  gone.bs.forEach(b => { b.status = 'gone'; });
+  eq('a shelf of gone bottles has no shape',
+    L.shelfAxes(gone.cat, gone.bs), null);
+
+  /* The roadmap reads off the axes, so it cannot disagree with the
+     picture — the fault this whole session kept turning up. */
+  const steps = L.shelfNextSteps(ax, 3);
+  eq('the roadmap leads with the thinnest axis',
+    steps[0].pct <= steps[steps.length - 1].pct, true);
+  eq('only the first calls itself the thinnest',
+    steps.filter(x => /thinnest/.test(x.text)).length, 1);
+  eq('each step names something to go and find',
+    steps.every(x => x.want && x.want.length > 1), true);
+  eq('and capitalises it', /^[A-Z0-9]/.test(steps[0].want), true);
+  eq('a complete axis is not in the roadmap',
+    L.shelfNextSteps([{ id: 'x', label: 'X', pct: 100, have: 3, total: 3,
+      of: 'things', missing: [] }], 3).length, 0);
+
+  /* Geometry. Twelve o'clock first, clockwise. */
+  const four = [{ id: 'a', label: 'A', pct: 100 },
+                { id: 'b', label: 'B', pct: 100 },
+                { id: 'c', label: 'C', pct: 100 },
+                { id: 'd', label: 'D', pct: 100 }];
+  const pts = L.radarPoints(four, 100);
+  eq('the first axis is straight up', [pts[0].x, pts[0].y], [0, -100]);
+  eq('and it goes clockwise', [pts[1].x, pts[1].y], [100, 0]);
+  eq('through the bottom', [pts[2].x, pts[2].y], [0, 100]);
+  eq('and back round', [pts[3].x, pts[3].y], [-100, 0]);
+
+  /* A zero axis still has to be drawable, or the shape collapses to a
+     point and the reader cannot see which axis is empty. */
+  const zero = L.radarPoints([{ id: 'a', label: 'A', pct: 0 },
+    { id: 'b', label: 'B', pct: 100 }], 100);
+  eq('a zero axis is still given a visible point',
+    zero[0].y < 0 && zero[0].y > -20, true);
+
+  eq('the path closes', /Z$/.test(L.radarPath(pts)), true);
+  eq('and starts with a move', /^M/.test(L.radarPath(pts)), true);
+  eq('no points is no path', L.radarPath([]), '');
+  eq('no axes is no points', L.radarPoints([], 100).length, 0);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
