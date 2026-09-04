@@ -6224,5 +6224,35 @@ sec('§217 the notes lookup and the facts lookup');
   eq('nothing at all', L.takeFor(null, 'facts'), null);
 }
 
+/* §218  naming a bottle to the person who owns it ---------------------
+ *
+ * "B199 · Open" — BZ: "the bottle ID is not something known to the user."
+ * Right: B199 is the key this app files a bottle under, not a number on
+ * the side of anything. What tells your bottles apart is whether one is
+ * open, when it turned up, and which of them you are looking at.
+ */
+sec('§218 what a bottle is called on its own screen');
+{
+  eq('one bottle, nothing to distinguish',
+    L.bottleLabel({ id: 'B199', status: 'open' }, 0, 1), 'Open');
+  eq('with a date, the date',
+    L.bottleLabel({ id: 'B346', status: 'open', got: '2026-09-03' }, 0, 1),
+    'Open \u00b7 added 2026-09-03');
+  eq('two of them, so which one comes first',
+    L.bottleLabel({ id: 'B12', status: 'sealed', got: '2026-09-03' }, 1, 2),
+    'Bottle 2 of 2 \u00b7 Sealed \u00b7 added 2026-09-03');
+  eq('the sealed backup of a pair, undated',
+    L.bottleLabel({ id: 'B13', status: 'sealed' }, 0, 2),
+    'Bottle 1 of 2 \u00b7 Sealed');
+  eq('the id never appears',
+    /B\d/.test(L.bottleLabel({ id: 'B199', status: 'open',
+      got: '2026-09-03' }, 0, 1)), false);
+  eq('and nothing is not a bottle', L.bottleLabel(null, 0, 1), '');
+  // The 344 from the audit carry no date, which is why it is optional
+  // rather than invented — an added date nobody recorded is a fiction.
+  eq('an undated bottle says only what is known',
+    L.bottleLabel({ id: 'B001', status: 'open' }, 0, 1), 'Open');
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
