@@ -7553,8 +7553,13 @@ sec('§233 six axes, no total');
     true);
   eq('and how many you hold',
     originAx.gaps.every(g => typeof g.n === 'number'), true);
+  /* No longer capped at three. A country is a depth now, so the United
+     States can be nine bottles short and say so; the assertion was
+     encoding the old "three is a comparison" rule, which never applied to
+     a place with thousands of distilleries. */
   eq('and how many more it needs',
-    originAx.gaps.every(g => g.short >= 0 && g.short <= 3), true);
+    originAx.gaps.every(g => g.short >= 0
+      && g.short <= L.COUNTRY_DEPTH[g.name]), true);
   eq('the names line up with the missing list',
     originAx.gaps.map(g => g.name).join('|'), originAx.missing.join('|'));
   /* A band gap is named by its label, not stringified from its object —
@@ -8603,70 +8608,94 @@ sec('§248 an axis is covered and spread, not just covered');
   eq('a shelf that is genuinely even reaches 100', flat.pct, 100);
 }
 
-/* §249  the whisky world, not the Scotch regions --------------------
+/* §249  a country is a depth, not a box -----------------------------
  *
- * The axis measured Scotch regions, which is 80 of BZ's 325 bottles: three
- * quarters of the shelf contributed nothing to it.
+ * The axis measured Scotch regions, which is 80 of BZ's 325 bottles.
+ * Countries looked like a duplicate of Breadth until he said why not:
+ * "there is literally a world of whiskey — I have India and New Zealand."
+ * Breadth collapses all of those into ONE bucket called `world`.
  *
- * The obvious fix looked like a duplicate of Breadth, because on that
- * shelf country and category are nearly the same — United States is
- * bourbon plus rye plus Tennessee, Scotland is scotch, Ireland is irish.
- * BZ said why that was wrong: "there is literally a world of whiskey — I
- * have India and New Zealand." Breadth collapses all of those into ONE
- * bucket called `world`, and only this axis can tell six countries apart.
+ * Then the harder correction, also his: "one bottle should not be worth
+ * 66% — there is a world scarcity problem and production volumes should
+ * help inform the curve." Equal buckets were wrong in both directions.
+ * Taiwan is two distilleries, so one Kavalan covered a whole country; the
+ * United States is thousands, so three bourbons "covered" it and the axis
+ * called that done.
+ *
+ * So a country is a DEPTH — how many different bottles it takes to have
+ * genuinely met the place — and the score is the share of the world's
+ * depth reached. Partial credit throughout: four Scotches is four tenths
+ * of Scotland, not a tick.
  */
-sec('§249 a world of whisky, told apart');
+sec('§249 how much of the whisky world');
 {
+  const geo = { subCountry: L.SUB_COUNTRY,
+                worldDist: { 'Rampur Distillery': 'India',
+                             'Pokeno Whiskey': 'New Zealand',
+                             'Kavalan': 'Taiwan' } };
   const mk = rows => {
     const cat = {}, bs = [];
     rows.forEach(([n, sub, dist], i) => {
       for (let j = 0; j < n; j++) {
         const k = 'w' + i + 'b' + j;
-        cat[k] = { k: k, name: k, sub: sub, dist: dist || ('H' + i),
+        cat[k] = { k: k, name: k, sub: sub, dist: dist || ('H' + i + j),
                    proof: 100 };
         bs.push({ k: k, status: 'open' });
       }
     });
-    return { cat: cat, bs: bs };
+    return L.shelfAxes(cat, bs, geo).filter(a => a.id === 'origin')[0];
   };
-  const world = (s, geo) => L.shelfAxes(s.cat, s.bs, geo)
-    .filter(a => a.id === 'origin')[0];
 
-  /* The whole point: two bottles that Breadth calls one category, and the
-     world axis calls two countries. */
-  const geo = { subCountry: L.SUB_COUNTRY,
-                worldDist: { 'Rampur Distillery': 'India',
-                             'Pokeno Whiskey': 'New Zealand' } };
+  /* Depths are proportional to how much whisky a place actually makes. */
+  eq('the United States takes a dozen', L.COUNTRY_DEPTH['United States'], 12);
+  eq('Scotland ten', L.COUNTRY_DEPTH.Scotland, 10);
+  eq('and Taiwan one, because Taiwan is essentially Kavalan',
+    L.COUNTRY_DEPTH.Taiwan, 1);
+  /* BZ's buddy has a Chinese whisky, and China is real now — Pernod's
+     Chuan and Diageo's Laoying both came on stream. */
+  eq('China is a whisky country', L.COUNTRY_DEPTH.China, 1);
+  eq('and Israel, for Milk & Honey', L.COUNTRY_DEPTH.Israel, 1);
+
+  /* The point of depths: three bourbons is not the United States. */
+  const three = mk([[3, 'bourbon']]);
+  eq('three bourbons do not cover America',
+    three.covered.indexOf('United States') >= 0, false);
+  eq('but they count for something',
+    three.pct > 0, true);
+  const twelve = mk([[12, 'bourbon']]);
+  eq('twelve do', twelve.covered.indexOf('United States') >= 0, true);
+  eq('and a dozen bourbons scores more than three',
+    twelve.pct > three.pct, true);
+
+  /* One Kavalan IS Taiwan, which is the other half of the same idea. */
+  const tw = mk([[1, 'world', 'Kavalan']]);
+  eq('one bottle covers a country that only has one distillery',
+    tw.covered.indexOf('Taiwan') >= 0, true);
+
+  /* Breadth still cannot tell world whiskies apart, which is why this
+     axis exists at all. */
   const two = mk([[1, 'world', 'Rampur Distillery'],
                   [1, 'world', 'Pokeno Whiskey']]);
-  const wa = world(two, geo);
-  eq('two world whiskies are two countries', wa.have, 2);
-  const br = L.shelfAxes(two.cat, two.bs, geo)
+  const br = L.shelfAxes(
+    { a: { k: 'a', name: 'a', sub: 'world', dist: 'Rampur Distillery' },
+      b: { k: 'b', name: 'b', sub: 'world', dist: 'Pokeno Whiskey' } },
+    [{ k: 'a', status: 'open' }, { k: 'b', status: 'open' }], geo)
     .filter(a => a.id === 'breadth')[0];
-  eq('and Breadth cannot tell them apart', br.have, 0);
+  eq('two world whiskies are one category', br.have, 0);
+  eq('and New Zealand is reached with its single bottle',
+    two.covered.indexOf('New Zealand') >= 0, true);
 
-  /* ONE bottle covers a country. Three is right for a cask and wrong for
-     Taiwan: a single Kavalan is the whole point of owning a Kavalan. */
-  const solo = world(mk([[1, 'japanese']]), geo);
-  eq('one bottle covers a country', solo.have, 1);
+  /* The gaps say how many MORE, not merely that something is absent. */
+  const some = mk([[3, 'bourbon'], [3, 'scotch']]);
+  const usGap = some.gaps.filter(g => g.name === 'United States')[0];
+  eq('a part-reached country reports what it still needs', usGap.short, 9);
+  eq('and what is already there', usGap.n, 3);
 
-  /* Tequila is on the map as Mexico and is not a whisky country. */
-  const teq = world(mk([[3, 'tequila']]), geo);
-  eq('a tequila does not cover a whisky country', teq.have, 0);
-
-  /* The gaps are places somebody could actually go and buy from. */
-  const some = world(mk([[3, 'bourbon'], [3, 'scotch']]), geo);
-  eq('the countries not held are named',
-    some.missing.indexOf('Taiwan') >= 0, true);
-  eq('and every one of them is one bottle away',
-    some.gaps.every(g => g.short === 1), true);
-
-  /* Without the map loaded the category mapping still places most of a
-     shelf, which is how the harness reaches this at all. */
-  const nomap = L.shelfAxes(mk([[3, 'bourbon'], [3, 'irish']]).cat,
-    mk([[3, 'bourbon'], [3, 'irish']]).bs)
-    .filter(a => a.id === 'origin')[0];
-  eq('the built-in mapping works without map.json', nomap.have, 2);
+  /* Without map.json the built-in category mapping still places a shelf. */
+  const nomap = L.shelfAxes(
+    { a: { k: 'a', name: 'a', sub: 'irish', dist: 'H', proof: 90 } },
+    [{ k: 'a', status: 'open' }]).filter(a => a.id === 'origin')[0];
+  eq('the built-in mapping works without map.json', nomap.pct > 0, true);
 }
 
 /* §250  a ladder is discounted by its holes ---------------------------
