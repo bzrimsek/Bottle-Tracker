@@ -8662,5 +8662,60 @@ sec('§249 a world of whisky, told apart');
   eq('the built-in mapping works without map.json', nomap.have, 2);
 }
 
+/* §250  scarcity weighs, so the last stretch is long -----------------
+ *
+ * BZ: "closing a node to 100% should get harder as scarcity increases,
+ * seems like an asymptote of sorts." A binary hard/not-hard flag said a 30
+ * year old was either counted or ignored; a weight says it is worth three
+ * ordinary bottles, which is nearer the truth and behaves as described.
+ *
+ * People buy the easy buckets first, so the weight that remains is always
+ * the expensive end and the curve flattens near the top by itself — no cap,
+ * no pretending.
+ */
+sec('§250 the last stretch weighs more');
+{
+  eq('an ordinary bucket weighs one', L.gapWeight('breadth', 'japanese'), 1);
+  eq('a 30 year old weighs three', L.gapWeight('age', '30'), 3);
+  eq('a 25 weighs two', L.gapWeight('age', '25'), 2);
+  eq('Sweden weighs three', L.gapWeight('origin', 'Sweden'), 3);
+  eq('an unlisted country still weighs one',
+    L.gapWeight('origin', 'Scotland'), 1);
+
+  /* The shape of the curve, worked out by hand. Age has seven tiers: five
+     ordinary at 1 each, plus 25 at 2 and 30 at 3, which is 10 of weight.
+     Five ordinary tiers is 5/10 — half the score for five sevenths of the
+     boxes, and the last two bottles carry the rest. */
+  const mk = ages => {
+    const cat = {}, bs = [];
+    ages.forEach((a, i) => {
+      for (let j = 0; j < 3; j++) {
+        const k = 'a' + i + 'b' + j;
+        cat[k] = { k: k, name: k, sub: 'scotch', dist: 'H' + i,
+                   proof: 100, age: a };
+        bs.push({ k: k, status: 'open' });
+      }
+    });
+    return L.shelfAxes(cat, bs).filter(x => x.id === 'age')[0];
+  };
+  const five = mk([10, 12, 15, 18, 21]);
+  eq('five of seven tiers is five tenths of the weight',
+    five.coverPct, 50);
+  const withTwentyFive = mk([10, 12, 15, 18, 21, 25]);
+  eq('adding a 25 is worth two ordinary tiers',
+    withTwentyFive.coverPct, 70);
+  const all = mk([10, 12, 15, 18, 21, 25, 30]);
+  eq('and the 30 carries the rest to the top', all.coverPct, 100);
+  /* Which is the point: the last two bottles are worth as much as the
+     first five, and 100% stays reachable rather than capped. */
+  eq('the top is still reachable', all.pct > 0, true);
+
+  /* An axis with no scarce buckets counts boxes, exactly as before. */
+  const flat = L.shelfAxes(
+    { a: { k: 'a', name: 'a', sub: 'bourbon', dist: 'H', proof: 100 } },
+    [{ k: 'a', status: 'open' }]).filter(x => x.id === 'breadth')[0];
+  eq('an axis of equal buckets is unweighted', flat.coverPct, 0);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
