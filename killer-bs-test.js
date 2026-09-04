@@ -4112,7 +4112,7 @@ sec('§181 the App use tab names controls that exist');
   const NAMED = [
     ['+ Add bottle',          'Shelf'],
     ['Import',                'Shelf'],
-    ['Change',                'Shop'],
+    ['\u2039 Back',            'Shop'],
     ['I bought it',           'In a store, holding a bottle'],
     ['Want it',               'In a store, holding a bottle'],
     ['Correct the details',  'Add a bottle you just bought'],
@@ -6022,6 +6022,139 @@ sec('\u00a7214b a number, or nothing, but never NaN');
   eq('and no price', L.normalizeProduct({ name: 'X', msrp: 'ask' }).msrp, null);
   eq('while a good one comes through',
     L.normalizeProduct({ name: 'X', proof: '92' }).proof, 92);
+}
+
+/* §215  what a bottle's status MEANS, in one place --------------------
+ *
+ * The rule was restated at twelve sites: some as status === 'open', some as
+ * status !== 'open', some as !== 'gone'. Twelve copies of one sentence, and
+ * a change to the sentence would have had to find all twelve — which is
+ * the pair problem in its purest form and the named cause of most of what
+ * went wrong this week.
+ *
+ * The ITERATION shapes still differ, and should: asking about one whisky
+ * stops at the first hit, asking about all of them makes one pass. What
+ * must never differ is what counts, so both read these three.
+ */
+sec('§215 one rule for what a status means');
+{
+  const open = { id: 'B1', k: 'A', status: 'open' };
+  const sealed = { id: 'B2', k: 'A', status: 'sealed' };
+  const gone = { id: 'B3', k: 'A', status: 'gone' };
+
+  eq('open is open', L.isOpen(open), true);
+  eq('sealed is not open', L.isOpen(sealed), false);
+  eq('gone is not open', L.isOpen(gone), false);
+
+  eq('open is owned', L.isOwned(open), true);
+  eq('sealed is owned', L.isOwned(sealed), true);
+  eq('gone is not owned', L.isOwned(gone), false);
+
+  eq('sealed is sealed', L.isSealed(sealed), true);
+  eq('open is not sealed', L.isSealed(open), false);
+  // The one that would have been wrong if sealed had been written as
+  // "not open": a bottle you finished is not sitting there sealed.
+  eq('and gone is NOT sealed, though it is also not open',
+    L.isSealed(gone), false);
+
+  eq('nothing is not a bottle', [L.isOpen(null), L.isOwned(undefined),
+    L.isSealed(null)], [false, false, false]);
+  eq('and neither is a bottle with no status',
+    [L.isOpen({}), L.isOwned({})], [false, true]);
+
+  /* THE PAIRING: every shape that reads the rule must give the same answer
+     as the rule. These are the four that walk bottles for a living. */
+  const shelf = [open, sealed, gone,
+                 { id: 'B4', k: 'B', status: 'open' },
+                 { id: 'B5', k: 'C', status: 'gone' }];
+  eq('pourable agrees with isOpen',
+    ['A', 'B', 'C'].map(k => L.pourable(k, shelf)),
+    ['A', 'B', 'C'].map(k => shelf.some(b => b.k === k && L.isOpen(b))));
+  eq('openKeys agrees with isOpen',
+    ['A', 'B', 'C'].map(k => !!L.openKeys(shelf)[k]),
+    ['A', 'B', 'C'].map(k => shelf.some(b => b.k === k && L.isOpen(b))));
+  eq('ownedCounts agrees with isOwned',
+    ['A', 'B', 'C'].map(k => L.ownedCounts(shelf)[k] || 0),
+    ['A', 'B', 'C'].map(k => shelf.filter(b => b.k === k && L.isOwned(b)).length));
+  eq('myBottles agrees with isOwned',
+    L.myBottles('A', shelf).map(b => b.id),
+    shelf.filter(b => b.k === 'A' && L.isOwned(b)).map(b => b.id));
+  eq('and sealedPrompt offers only what isSealed says is sealed',
+    L.sealedPrompt('A', shelf, {}).sealed.map(b => b.id),
+    shelf.filter(b => b.k === 'A' && L.isSealed(b)).map(b => b.id));
+}
+
+/* §216  an update whose keys are PATHS --------------------------------
+ *
+ * BZ: "publish 1 to library, then mark it published, then it still says
+ * Publish 1."
+ *
+ * Firebase's update() reads "a/b/c" as a path to a child. fbEncode escapes
+ * every key it meets, and wrapping a path-keyed payload in it turned the
+ * slashes into ~f — so publishing wrote ONE child called
+ * "catalog~fproducts~fweller_12" at the top of the shared node, reported
+ * success, and the library received nothing. The count could never clear
+ * because the entry was never there.
+ *
+ * §212 documents this exact trap for the map delta and asserts that
+ * fbEncode would break it. Four other call sites did it anyway — batch
+ * publish, the library rename, publish-after-buy, and the library undo —
+ * which is the pair problem again: the rule was written down in one place
+ * and applied in one place.
+ */
+sec('§216 a path is not a key');
+{
+  const write = { 'catalog/products/elmer_t_lee': { name: 'Elmer T. Lee',
+                                                    proof: 90 },
+                  stamp: 7 };
+  const out = L.fbEncodePaths(write);
+
+  eq('the path survives as a path',
+    Object.keys(out).sort(), ['catalog/products/elmer_t_lee', 'stamp']);
+  eq('and the value goes through untouched',
+    out['catalog/products/elmer_t_lee'], { name: 'Elmer T. Lee', proof: 90 });
+
+  /* What the bug did, kept here so nobody reinstates it: fbEncode escapes
+     the separators and the write lands nowhere. */
+  eq('fbEncode would have written one child with slashes in its name',
+    Object.keys(L.fbEncode(write))[0], 'catalog~fproducts~felmer_t_lee');
+
+  // Each SEGMENT is still escaped, because a segment is a key and a bottle
+  // name holds full stops.
+  eq('a segment that needs escaping still gets it',
+    Object.keys(L.fbEncodePaths({ 'edits/Elmer T. Lee': { proof: 90 } })),
+    ['edits/Elmer T~d Lee']);
+  eq('and a bare key with no slash is escaped as before',
+    Object.keys(L.fbEncodePaths({ 'Elmer T. Lee': 1 })), ['Elmer T~d Lee']);
+
+  // null is a delete and must reach Firebase as null, not as an encoded
+  // object — this is how a library entry is removed.
+  eq('a delete stays a delete',
+    L.fbEncodePaths({ 'catalog/products/gone': null }),
+    { 'catalog/products/gone': null });
+
+  // And undefined is still stripped out of the values.
+  eq('undefined inside a value is dropped',
+    L.fbEncodePaths({ 'catalog/products/x': { a: 1, b: undefined } }),
+    { 'catalog/products/x': { a: 1 } });
+
+  /* THE PAIRING: publishWrite builds the paths, fbEncodePaths sends them,
+     and what lands must be readable by the key pendingForLibrary looks up
+     — or the button never clears. */
+  const p = { k: 'Elmer T. Lee', name: 'Elmer T. Lee', proof: 90,
+              dist: 'Buffalo Trace', sub: 'bourbon' };
+  const built = L.publishWrite([p], 1);
+  const sent = L.fbEncodePaths(built.updates);
+  const landed = {};
+  Object.keys(sent).forEach(path => {
+    const parts = path.split('/');
+    if (parts[0] !== 'catalog') return;
+    landed[L.unFbKey(parts[parts.length - 1])] = sent[path];
+  });
+  eq('it lands under the key the library is read by',
+    Object.keys(landed), [L.libKey(p.name)]);
+  eq('so nothing is left pending afterwards',
+    L.pendingForLibrary({ [p.k]: p }, landed), []);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
