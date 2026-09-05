@@ -117,112 +117,33 @@ after it, which is comfort rather than protection.
 
 ## New, from 2026-09-04
 
-### Score the shelf, and hand back a roadmap
-BZ: "come up with a metric and give people guidance to the bottles they
-should buy to get to the next level - it may be cheesy, but dudes love to
-compete and we can show them a roadmap."
+## Closed
 
-The pieces already exist and were built this session. `L.tasteProfile`
-knows depth, breadth, wood families, peat levels, proof quartiles and
-mashbills. `L.shelfPortrait` already turns those into a named identity a
-shelf has EARNED, with the number that earned it. `L.likelyToLike` already
-produces ranked asks with reasons. A score is the same evidence read as a
-position rather than a description, and the roadmap is the affinity list
-filtered to the findings that would move it.
+Built, measured or abandoned. Kept as a list rather than as pages, because the reasoning lives in CHANGELOG.md against the version that shipped it.
 
-What has to be decided before building it:
-
-- **What the score measures.** Breadth and depth pull opposite ways, and a
-  metric that rewards both equally rewards neither. A 344-bottle shelf that
-  is all bourbon and a 40-bottle shelf covering nine categories are both
-  good collections and a single number will call one of them worse. The
-  honest shape is probably several scores — depth, breadth, wood, strength,
-  provenance — with no total, or a total the app refuses to rank against
-  anybody else's.
-- **Whether it compares people.** BZ named competition as the point, which
-  needs the multi-user shelves to be real first, and needs a view on what
-  happens to somebody whose shelf is small. A leaderboard of who owns more
-  whisky is a leaderboard of who has more money, which is not a thing this
-  app should be built to celebrate.
-- **The roadmap has to be honest about cost.** "Next level" that requires a
-  £400 bottle is not guidance, it is a shopping list. The candidate finder
-  already tags allocated bottles and sinks them; the same rule applies here
-  and harder.
-
-Blocked on nothing technically. Worth doing after a second person is
-actually using the app, since half of what makes it fun does not exist for
-one user.
-
-### Fill the library's gaps in bulk — DONE 2026-09-04
-Built as specified below. `L.planLibraryFill` decides what to ask about and
-what to skip in one pass, so the bill somebody approves is the same list
-that runs. The count is a filter that composes with the type and the
-search. The run reuses `askLookup` and the five-consecutive-error breaker,
-and nothing is written until a review screen has been through it — named,
-additive writes that never overrule a field the library already holds.
-
-`L.recordLookup` is the ledger, keyed by product: two clean empty answers
-stop a bottle being asked about, a hit wipes the doubt, an ERROR counts
-against nothing, and a miss ages out after 90 days. It merges on sync, so
-two admins filling from different devices share what each learned.
-
-What is NOT done: the cost estimate is a count of lookups, not money. The
-run says how many it will do and how many it skipped; it does not know what
-a lookup costs. That is still item 11, and it now has one more caller.
-
-Original entry follows.
-
-### Fill the library's gaps in bulk
-BZ, 2026-09-04, looking at "331 whiskies, 54 missing something": "where do
-I run the library bulk update?" There is no such thing, and that is the
-finding. The 54 are reachable only one at a time — tap a row carrying `!`,
-read what it is short of, open the editor, repeat.
-
-Two tools exist and neither does this:
-- **Publish N to the library** pushes fields YOUR shelf already holds that
-  the library lacks. It cannot fill a hole nobody has the answer to, which
-  is why it can be absent while 54 entries are thin.
-- **The enrichment run** works on your own shelf, not on library entries.
-
-What to build, admin-only:
-1. Make the count a filter. "54 missing something" should be tappable and
-   show only those rows; right now it is a number with no way into it,
-   which is the same fault as a chart you cannot drill.
-2. A **Fill the 54** run against the lookup service, reusing what the shelf
-   enrichment already learned the hard way: the circuit breaker after five
-   consecutive errors, the identity gate, and parseLookup keeping the four
-   sensory fields.
-3. A review step before anything is written. `publishBatch` is the model —
-   named writes only, never replacing the node, so a correction somebody
-   else made is not destroyed.
-4. A cost estimate before the run and a total after it. 54 lookups is real
-   money and the budget item (item 11) is still open for the shelf run;
-   build it once here and use it in both.
-5. **Never pay for the same miss twice.** BZ, same conversation: "we also
-   want to make sure we don't try the same bottle over and over and spend
-   the money." A library entry that comes back with nothing is not a
-   transient failure — an obscure bottling nobody has written up is still
-   unwritten next week, and a run that re-asks all 54 every time pays for
-   the misses for ever.
-
-   The pattern already exists twice and must not be written a third time:
-   `L.recordAsk` / `L.askScore` keep an ok/no tally per ask and sink the
-   ones that keep coming back empty, and `deadGaps` removes the
-   proven-impossible outright. Both key off `L.gapKey`. The library needs
-   the same shape keyed by product: what was asked, when, and what came
-   back, so a second run skips a known miss and says how many it skipped
-   rather than silently doing less.
-
-   Two rules that fell out of the shelf run and apply here unchanged. An
-   error is not a miss: credits running out and a model timing out both
-   look like "nothing found" and neither is evidence about the bottle, so
-   only a clean empty answer counts as a no. And a miss is not permanent —
-   the library grows, so a skipped entry needs a way back in, either an
-   age-out or an explicit "try the skipped ones again".
-
-`L.libraryGaps` already defines thin: no proof, no distillery, no category,
-or notes that are absent or came off a flight card. That definition is the
-spec — do not write a second one.
+- Score the shelf, and hand back a roadmap
+- Fill the library's gaps in bulk
+- Record what was actually poured, not what was designed
+- Scan a barcode from the add-a-bottle form
+- Does the recommender actually work
+- Flights built around a flavour — "can you find the caramel?"
+- 6. Barcode scanning
+- 13a. Dimensions
+- 1. Multi-user, sharing and tasting night
+- 2. Turn on the lookup and design service
+- 2b. Shared shelves, matched bottles, and Join Me Pour
+- 2b-ii. An imported shelf needs enriching, and someone pays for it
+- 2b-i. One resolver, not a batch script
+- 2c. Where the missing tasting notes could come from
+- 2c-ii. Pour Picks
+- 2c-iii. Probe, then run the whole shelf
+- 2d. Whiskybase via parse.bot
+- 3. Old Elk Infinity Blend — closed
+- 4. The 138 bottles with no tasting notes
+- 5. Wishlist, and what is missing from the shelf
+- 9. Flight re-instantiation
+- 13. Paste a shop URL for a verdict
+- 17. The shelf redraws whole, and counts by scanning
 
 ### An admin with an empty queue cannot tell they are an admin
 Same session. The library screen shows "Offered to the library — Nothing
@@ -236,35 +157,6 @@ admin and what would appear here when there is work. v1.6.21 made the
 failing case say why in Diagnostics; the succeeding-but-idle case still
 says nothing.
 
-### Record what was actually poured, not what was designed
-BZ, 2026-09-04: "when we do a flight, we need to record which extension
-actually got poured and if we riff onto any others."
-
-`runFlightNow` logs the CORE pours and nothing else. A flight's `ext` list
-— the bench pours, the ringers — is designed and never recorded, so the log
-says a flight ran and cannot say whether the extension that made the point
-was opened. Anything poured on the night that was in no list at all is
-invisible.
-
-That matters more now than it did. Buy-against-drink, the collector line,
-the tonight ordering and `L.useCount` all read the log, and the log is
-currently a record of the DESIGN rather than the evening.
-
-What to build:
-- A run should end with the pours confirmed rather than assumed: the core
-  ticked by default, the extensions unticked, and a way to add a bottle
-  that was not in either list.
-- The record grows two fields — which extensions were poured, and which
-  riffs. Both optional, because every run already logged has neither and
-  must keep reading correctly.
-- Riffs are the interesting half. A bottle somebody reached for mid-flight
-  is a stronger signal than one the flight designed, and nothing in the app
-  can currently see it.
-
-Do NOT make this a form. The point of a flight is the evening; a run that
-demands six confirmations before it will record anything will be skipped,
-and a skipped log is worse than an imprecise one. Default to what was
-designed, make correcting it one tap.
 
 ### Share what a flight tasted, and let it seed a wishlist
 BZ, same conversation: "if we are doing a flight with buddies, can we share
@@ -342,42 +234,6 @@ was there, so a device that is not on that list has nothing to read.
 Both of these want the same thing first: the run has to know who was there,
 which it currently does not.
 
-### Scan a barcode from the add-a-bottle form — DONE 2026-09-04
-Built as described. `scanBarcode` takes an optional callback now, so a
-caller can have the number instead of the default routing to Shop; the
-Shop header button passes none and behaves as before.
-
-One trap worth recording: `$('#scanBtn').onclick = scanBarcode` would have
-handed the Event in as the callback, and an Event is truthy and not
-callable. The handler is `() => scanBarcode()` and the check inside is
-`typeof onCode === 'function'` rather than truthiness.
-
-Checked by driving both paths: a known code fills the name, an unknown one
-is held and taught on save.
-
-Original entry follows.
-
-### Scan a barcode from the add-a-bottle form
-BZ, 2026-09-04: "when we add a bottle manually a barcode scan would be
-useful."
-
-`scanBarcode` exists and works on both engines since v1.6.44, but it is
-wired to exactly one button — `#scanBtn` in the Shop header. Somebody who
-went Shelf, Add bottle is typing a name that is printed on a barcode eight
-inches away, and the app can read it.
-
-Small, and mostly plumbing:
-- A scan control in `productForm`, next to the name field.
-- On a hit, `knownUpcs` may already name the bottle; if it does the form
-  fills and there is nothing to type. If it does not, the number is kept so
-  that adding the bottle TEACHES the pairing — which is the half that
-  compounds, because the next person to scan it gets the name.
-- The form is also where a bottle arrives with no pairing at all, so it is
-  the best place in the app to collect them.
-
-Worth doing before the group starts, not after: every scan somebody makes
-in the first month is a pairing the library keeps, and a form that cannot
-scan is a month of pairings not collected.
 
 ### Is this offer actually a good price
 BZ, same conversation: "when looking at an offer a deal check based on
@@ -501,51 +357,6 @@ their collection value. The honest version answers a narrower question —
 is this a good price FOR YOU, given what you have paid — and says nothing
 when it cannot.
 
-### Does the recommender actually work — MEASURED 2026-09-04
-The open question since the engine was built: it was plausible and never
-checked. Checked now, against the strongest ground truth on the shelf —
-14 whiskies BZ bought more than once, a decision made twice.
-
-Method: hold ONE bottle out, so the shelf stands as it did the day before
-the second was bought, and ask whether the engine names that house. Not
-whether it names the bottle: the engine emits asks, not bottles. A first
-attempt dropped the whole product and was wrong — that erases the repeat
-itself, which is the thing under test.
-
-A loose matcher gave 14 of 14 and meant nothing: 11 of those matched on
-CATEGORY, and on a shelf that is 129 bourbons "the ask says bourbon and
-the bottle is a bourbon" is very nearly vacuous. Strictly — the ask has to
-name the house or the brand:
-
-    before   5 of 14 repeat buys, 0 of 14 bought-once control
-    after    9 of 14 repeat buys, 2 of 14 control
-
-**Precision was perfect and stayed perfect.** Both control hits are
-bottles from Spot Whiskey and Penelope, houses BZ DOES go back to, so
-naming them is correct — the control was the flawed measure, not the
-engine. It has never once pointed at a house somebody did not return to.
-
-**Recall was the problem, and it was two lines.** `t.repeats.slice(0, 6)`
-meant eight of fourteen houses could not produce an ask however strong the
-evidence. And a house where every obvious move had already been made —
-owned at strength AND aged AND finished — fell through all three branches
-and produced nothing, which is precisely the deepest relationship on a
-shelf. Buying a fourth is itself the pattern; there is a fourth branch now
-that says so.
-
-What this does NOT establish: that the asks are good, only that they point
-at the right houses. Whether "A stronger Rabbit Hole" leads to a bottle
-worth owning is a different question and needs the group.
-
-## Cross-connections, 2026-09-04
-
-Four things the app already holds that do not yet talk to each other. BZ
-took all of these and declined a fifth — a second identity read off the
-pour log, "you buy sherry and you drink Islay" — as too temporal. He is
-right: a shelf is cumulative and a pour log swings with the season, so a
-drinking identity would rename itself every few months and mean less each
-time. The buy-against-drink 2x2 already surfaces that gap without claiming
-it is who somebody is.
 
 ### Nothing reads the tasting notes
 The largest unused asset in the app. 930 note fields on BZ's shelf, and the
@@ -572,62 +383,6 @@ What it needs:
   versus what it TASTES like are two different sentences, and only one is
   currently written.
 
-### Flights built around a flavour — "can you find the caramel?"
-BZ, 2026-09-04. The best idea of the session, and a better use of the notes
-than the recommender was.
-
-Every flight this app designs varies something STRUCTURAL: a wood, a proof,
-a region, an age, a mashbill. A flavour is a variable nobody has used, and
-it is the one a person tasting actually thinks in. Two shapes, both honest
-comparisons:
-
-- **Find it.** Every pour is described as carrying the note; everything
-  else — house, wood, category, strength — varies as widely as possible.
-  You learn what "caramel" means by hearing it in six different contexts,
-  which is how anybody learns a flavour word.
-- **Odd one out.** Three carry it, one does not, and the card does not say
-  which. Falsifiable in the room, which the structural flights are not.
-
-**BZ's shelf can build these today.** Pourable bottles whose notes carry
-the word, and how widely they range:
-
-    caramel    90 across 7 types, 48 houses
-    vanilla    93 across 8 types, 57 houses
-    honey      72 across 8 types, 43 houses
-    pepper     59 across 5 types, 36 houses
-    chocolate  38 across 5 types, 30 houses
-    salt       15 across 5 types, 11 houses
-    leather    14 across 3 types, 13 houses
-
-Caramel and vanilla are almost too easy — that much spread means the
-flavour is the only constant, which is exactly the right shape. Salt,
-leather and tobacco are the interesting ones: scarce enough that the flight
-is a hunt.
-
-**The catch, and why it makes the idea stronger rather than weaker.**
-Checked on 2026-09-04: of the notes on BZ's shelf, 113 are `tnSrc: model`,
-185 carry a `tnFrom` flight prompt, and 12 came from reviews. Almost none
-were written by him. So a flight asserting "these four all have caramel" is
-currently testing the MODEL'S vocabulary and not the whisky.
-
-Do not paper over that. Build it in:
-
-- The flight's premise is a CLAIM to be tested, not a fact to be taught.
-  "The library says all six of these carry caramel. Do you agree?" A flight
-  that can be wrong is a better flight, and this one can be.
-- Running it produces the person's OWN notes on those pours, which is the
-  only way the app ever gets real flavour data. The flavour flight is the
-  mechanism that converts model notes into human ones — it bootstraps the
-  thing the recommender would need.
-- Which means it should be built BEFORE the flavour profile in the
-  recommender, not after. A profile built on 113 model notes is a profile
-  of the model; a profile built on notes somebody wrote after tasting six
-  bottles side by side is the real thing.
-- Show provenance on the card. A pour whose note came from a model and one
-  a person wrote are different evidence, and `tnSrc` already knows.
-
-That ordering is the point: flavour flights first, flavour recommendations
-once there are enough human notes to stand on.
 
 ### Flights and the shape chart do not know about each other
 A thin axis has a consequence that is not being surfaced: it means certain
@@ -642,6 +397,7 @@ deliberately demoted when affinity took the lead; now that the recommender
 argues from taste, "and it completes ONE STILL FOUR RECIPES" is a second
 reason to hang on an affinity finding rather than a competing source.
 
+
 ### Two shelves, side by side
 The sharing feature that has not been built. `L.shelfAxes` run twice
 answers a question neither shelf answers alone: what can I taste at their
@@ -652,11 +408,54 @@ It also gives the flights somewhere to go: a flight neither of you can run
 alone but both of you can run together is the strongest argument for
 sharing a shelf that this app could make.
 
+
 ### The map is disconnected from Origin
 The Origin axis counts Scotch regions only. The map knows countries, and
 `L.countryCounts` already computes them. World coverage is an axis the data
 supports and nothing scores, and the map is currently a picture rather than
 a measure — tapping a country says what is there, and never what is not.
+
+
+### Editable reference data — DEFERRED, and BZ is right to be wary
+BZ, 2026-09-04: "should any of these scales and lists be settings to be
+managed, populated now and then edited without a release?" Then, having
+thought about it: "seems like trouble the more I think about it."
+
+He is right, and the reason is that the lists are two different kinds of
+thing wearing the same clothes.
+
+**Reference data that grows with the world.** `worldDist` (house to
+country), `PEAT_HOUSES`, `PEAT_EXTREME`, and arguably `COUNTRY_DEPTH`.
+Distilleries open constantly — 20 houses were added by hand on 2026-09-04
+and that list will be wrong again within a year. These are facts about the
+world rather than judgments, and a wrong one is a small local error: a
+bottle lands in the wrong country and nothing else moves.
+
+**Scoring taxonomy.** `WOOD_FAMILIES`, `PROOF_BANDS`, `AGE_TIERS`,
+`CORE_STYLES`, `FINISH_TIERS`, `PEAT_LABELS`, and the ladder-versus-set
+split. Editing any of these silently rewrites what every score has ever
+meant, retroactively, for everybody. Somebody nudges a proof band and a
+shelf that read 100% on Strength yesterday reads 80% today with no bottle
+having moved. That is not configuration, it is a schema change.
+
+**If it is ever built, only the first kind, and not in Settings.** These
+are not somebody's preferences, they are shared truth, so the home is the
+LIBRARY — already shared, already admin-writable, already has review. A
+house-to-country mapping is the same shape as a barcode pairing and should
+travel the same path.
+
+**And most of it need not be typed at all.** The lookup already returns a
+distillery; it could learn the country the way it already learns proof and
+cask, through the silent contribution path built on 2026-09-04.
+
+**What stays in code, deliberately.** The taxonomy. A release is the right
+amount of friction for a change that rewrites history, and the tests are
+what stop a bad edit — `AGE_TIERS` has assertions behind it and a Firebase
+field would not.
+
+**Why it is deferred rather than queued.** The shared library has never
+been used by two people. Adding a second shared, editable data path before
+the first has met a real user means debugging both at once.
 
 ## Not looked at
 
@@ -678,59 +477,6 @@ immediately queue.
 
 ## Closed
 
-### 6. Barcode scanning — DONE
-The camera and the decoding are the browser's own, so it costs nothing.
-The barcode store answers FIRST, because a number cannot be searched on a
-shelf keyed by name, and says so plainly when nothing knows the code. A
-miss where you then type the name teaches the pairing and shares it, so
-the next person to scan that bottle does not type it again. Listings are
-pasted rather than fetched. See item 14 for what it does not know yet.
-
-### 13a. Dimensions — DONE
-Findings were computed from what is ABSENT, and absence is unbounded.
-Seven axes chosen by the user instead: region, distillery, cask,
-strength, age, price, category. Each returns bounded, named things to
-find rather than categories to translate, works on a shelf with no
-flights, and narrows a search as readily as it shapes a suggestion.
-
-## Closed
-
-### 1. Multi-user, sharing and tasting night — DONE
-Google sign-in, per-user rules, a directory, requests and shares, all live. Tasting-night mode is NOT built and moves to item 10.
-
-### 2. Turn on the lookup and design service — DONE
-Key in Script Properties, deployed, working. The workspace header was the catch: an identity-linked key will not authenticate without it.
-
-### 2b. Shared shelves, matched bottles, and Join Me Pour — DONE
-Shared shelves, the three-circle Venn with counts in the overlaps, Join Me Pour and find-a-match on the slot machine. Untested with a second person.
-
-### 2b-ii. An imported shelf needs enriching, and someone pays for it — DONE
-Fill in your shelf, behind the gear. Writes to the user own edits, never the shared catalogue. Cost is still uncapped — see item 11.
-
-### 2b-i. One resolver, not a batch script — DONE
-The resolver is lookup.gs and the app calls the same endpoint. Fill in your shelf runs it over a whole collection.
-
-### 2c. Where the missing tasting notes could come from — DONE
-Settled. WHISKY:EDITION has notes and hit 7 of 14; Pour Picks has none at all, only flavour tags. The model with web search did the rest.
-
-### 2c-ii. Pour Picks — the bourbon half, and the best of the four — DONE
-Wrong. Pour Picks carries no tasting notes — that assumption cost a projection of 131 bottles that turned out to be zero from that source.
-
-### 2c-iii. Probe, then run the whole shelf — not just the gaps — DONE
-Run, three times. Each pass found a matcher bug; the third was clean.
-
-### 2d. Whiskybase via parse.bot — worth it, for QA and obscurity — DONE
-Not needed. Obscurity came from Pour Picks popularity_tier, and notes from elsewhere.
-
-### 3. Old Elk Infinity Blend — closed
-Consumed before it was ever catalogued, so there is nothing to add. Closed
-2026-09-01.
-
-### 4. The 138 bottles with no tasting notes — DONE
-310 of 325 now carry notes. The 15 left are single barrels and private picks with nothing published anywhere.
-
-### 5. Wishlist, and what is missing from the shelf — DONE
-Wishlist, what to look for, extension and contrast findings, the candidate finder with a budget, and dead-end memory.
 
 ### 5b. Gifts — the wishlist pointed outward
 Requested 2026-08-31. Two features that share one hard requirement.
@@ -782,20 +528,13 @@ backlog. It is not that a leak is dangerous, it is that a leak makes the
 feature pointless — a gift finder that spoils gifts is worse than none.
 
 
-### 6. Barcode scanning
-Folded into item 2b, which supplies the reason to build it: barcodes are the
-index that makes two shelves agree on what a bottle is. The camera half is
-straightforward; the lookup half is what item 2 solves.
-
----
-
-## Deferred by design
 
 ### 7. Receipt ingest by email
 Forward a receipt to a dedicated Gmail account; Apps Script polls every
 fifteen minutes, parses it, and drops the acquisition into a pending queue
 for confirmation. No domain needed. Parsers are per retailer, so it grows
 one shop at a time. Same script project as item 2.
+
 
 ### 8. Road trip planner
 You backlogged this yourself, and the data side is now finished: all 56 US
@@ -806,8 +545,6 @@ nothing and works offline but is not roads; real driving directions need an
 API, a key and a proxy, and no free router handles the Islay ferry well.
 Nearest-neighbour ordering is fine for six stops.
 
-### 9. Flight re-instantiation — DONE
-Run it again, keeping the variable AND the flight own constraints.
 
 ### 10. Tasting night
 Split out of item 1, which is otherwise done. Nothing here is built. The
@@ -840,10 +577,12 @@ happened.
 Wants shared shelves exercised with a real second person first. That has
 never been done.
 
+
 ### 11. A cap on what a lookup run can spend
 Fill in your shelf calls the API once per bottle on BZ's key. Three hundred
 bottles is a few dollars and fine; a stranger importing a shelf is not.
 Needs a per-user ceiling before anybody outside the three uses it.
+
 
 ### 12. Pooled flights cannot be fully blind
 Raised 2026-09-01, after it was built. Marcus knows what he brought, so a
@@ -865,13 +604,6 @@ flight uses, so it is a small change if it is ever wanted.
 all. If it is not reached for in three months that is an answer, and it cost
 an hour.
 
-### 13. Paste a shop URL for a verdict — DONE
-Shipped as the third situation, Looking at it on a website. It reads the
-name, proof, age, cask, region, size, price, the bonded, cask-strength and
-single-barrel flags and the shop's own tasting note. Most retailers refuse
-a cross-origin fetch, so pasting the page text is the path that actually
-gets used — and v1.26.2 fixed the name parser, which had been reading a
-pasted page BODY with a function written for a title tag.
 
 ### 15. Where a hard bottle can actually be got
 Raised by BZ 2026-09-03. What he does today: search the bottle in Google,
@@ -911,6 +643,7 @@ map per product. Its pages render in the browser, so a plain fetch returns
 an empty document and it can only ever be a link. If a second button is
 ever wanted, that is the one, and it is still just a link.
 
+
 ### 16. Firebase write ceilings
 Raised again 2026-09-03. Every shared node has a rule bounding what may be
 written to it except `upc`, the barcode pairings, which anybody signed in
@@ -926,26 +659,6 @@ timestamp, and nothing else accepted.
 Worth doing before the app is shared with anybody outside the current
 circle, and not urgent while it is not.
 
-### 17. The shelf redraws whole, and counts by scanning
-Measured before this session: `renderShelf` is undebounced, so every
-keystroke in the search box rebuilds the entire list, and `ownedCount`
-walks all 345 bottles for each of the 327 products — 111,800 comparisons,
-about 67ms per redraw. Typing a six-letter search runs that six times.
-
-Neither is subtle to fix and neither needs a redesign:
-
-- **Count once, not per product.** One pass over `S.bottles` building a map
-  of key to count, handed to the render, turns 111,800 comparisons into
-  345. This is the whole of the 67ms.
-- **Debounce the search.** A redraw per keystroke is a redraw per keystroke
-  whatever it costs; roughly 150ms of quiet is the usual answer, and the
-  filter chips should still redraw immediately since a tap is a decision
-  rather than a letter.
-
-BZ has deferred this twice, both times correctly — a screen that is
-slightly slow is a smaller problem than a screen that is wrong, and this
-week has been full of screens that were wrong. It is now the largest thing
-left that is neither a feature nor a fault.
 
 ### Also worth naming, from the week of 2026-09-03
 Every serious fault this week was the same shape: two functions holding one

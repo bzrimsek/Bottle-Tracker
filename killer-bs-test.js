@@ -8958,5 +8958,114 @@ sec('§253 how it is made, not where it is from');
       && L.CORE_MAKES.indexOf('world') < 0, true);
 }
 
+/* §254  a bottle that completes a flight -----------------------------
+ *
+ * The shape chart and the flights did not know about each other. A gap on
+ * an axis is an abstraction — "you are thin on single grain" — while a
+ * flight is a comparison somebody sat down and designed and then could not
+ * pour. A bottle that finishes one is the better argument.
+ */
+sec('§254 what a bottle would unlock');
+{
+  const cat = {
+    a: { k: 'a', name: 'Have One' }, b: { k: 'b', name: 'Have Two' },
+    c: { k: 'c', name: 'Missing One' }, d: { k: 'd', name: 'Missing Two' },
+    e: { k: 'e', name: 'Missing Three' }
+  };
+  const bs = [{ k: 'a', status: 'open' }, { k: 'b', status: 'open' }];
+  const flights = [
+    { title: 'ONE AWAY', core: [{ k: 'a' }, { k: 'b' }, { k: 'c' }] },
+    { title: 'TWO AWAY', core: [{ k: 'a' }, { k: 'c' }, { k: 'd' }] },
+    { title: 'MILES AWAY',
+      core: [{ k: 'c' }, { k: 'd' }, { k: 'e' }, { k: 'a' }] },
+    { title: 'ALREADY RUNNABLE', core: [{ k: 'a' }, { k: 'b' }] }
+  ];
+
+  const one = L.flightsUnlockedBy('Missing One', flights, cat, bs);
+  eq('a bottle that finishes a flight says so',
+    one.some(f => f.title === 'ONE AWAY' && f.last), true);
+  eq('and a flight it only half finishes is marked as such',
+    one.filter(f => f.title === 'TWO AWAY')[0].last, false);
+  /* Three missing is not an unlock, it is a shopping list. */
+  eq('a flight miles away is not called an unlock',
+    one.some(f => f.title === 'MILES AWAY'), false);
+  eq('the nearest comes first', one[0].title, 'ONE AWAY');
+
+  eq('a bottle already on the shelf unlocks nothing',
+    L.flightsUnlockedBy('Have One', flights, cat, bs).length, 0);
+  eq('and a bottle no flight wants unlocks nothing',
+    L.flightsUnlockedBy('Utterly Unrelated', flights, cat, bs).length, 0);
+
+  /* Matched by NAME, because a flight can name a pour with no catalogue
+     entry — which is exactly the case where the bottle is not owned. */
+  const byName = L.flightsUnlockedBy('Ghost Bottle',
+    [{ title: 'NAMED ONLY', core: [{ k: 'a' }, { card: 'Ghost Bottle' }] }],
+    cat, bs);
+  eq('a pour named without a key still matches', byName.length, 1);
+
+  eq('an empty name matches nothing',
+    L.flightsUnlockedBy('', flights, cat, bs).length, 0);
+  eq('and no flights is not an error',
+    L.flightsUnlockedBy('Missing One', null, cat, bs).length, 0);
+}
+
+/* §255  the story lines are ordered ----------------------------------
+ *
+ * BZ: "I'm a stickler for sort order, I like descending if it's
+ * numerical, and it should be closer to the story at the top and fun
+ * facts later." The lines came out in whatever order the code built them,
+ * which put "28 heavily peated" above "62 in sherry wood" on a shelf
+ * titled PX Lover — the card making a claim and then burying its own
+ * evidence.
+ *
+ * Two rules: the lines that BACK THE TITLE first, in title order, then
+ * everything else biggest number down.
+ */
+sec('§255 evidence first, then biggest');
+{
+  const cat = {}, bs = [];
+  const add = (k, n, extra) => {
+    for (let i = 0; i < n; i++) {
+      const key = k + i;
+      cat[key] = Object.assign({ k: key, name: k + ' ' + i, sub: 'scotch',
+        dist: k, proof: 100 }, extra || {});
+      bs.push({ k: key, status: 'open' });
+    }
+  };
+  // A sherried shelf that is also deep in one house, so two titles compete.
+  add('Sherried', 30, { fin: 'Pedro Ximenez' });
+  add('Deep House', 20, { fin: 'Sherry' });
+  const p = L.shelfPortrait(cat, bs, { obscure: 0 });
+
+  eq('the shelf earns a title', p.title.length > 0, true);
+  /* The wood line argues a sherry title, so it leads. */
+  eq('the line that backs the title comes first',
+    /sherry wood/i.test(p.lines[0].text), true);
+
+  /* And the tail descends. Every line after the last title-backed one is
+     in falling order, which is the half BZ asked for by name. */
+  const nums = p.lines.map(l => l.n || 0);
+  const tailFrom = p.lines.findIndex((l, i) =>
+    i > 0 && nums[i] > nums[i - 1]);
+  const tail2 = tailFrom < 0 ? nums : nums.slice(tailFrom);
+  eq('nothing in the list is out of order without a reason',
+    tail2.every((n, i) => i === 0 || n <= tail2[i - 1]), true);
+
+  /* A title with no line of its own must not borrow one. Islay Regular is
+     earned off Islay bottles and the depth line is about a distillery;
+     lending it rank put Buffalo Trace above a bigger number. */
+  const islay = {}, ibs = [];
+  for (let i = 0; i < 25; i++) {
+    const k = 'i' + i;
+    islay[k] = { k: k, name: 'Islay ' + i, sub: 'scotch', region: 'Islay',
+                 dist: 'House ' + (i % 9), proof: 100 };
+    ibs.push({ k: k, status: 'open' });
+  }
+  const ip = L.shelfPortrait(islay, ibs, { obscure: 0 });
+  const inums = ip.lines.map(l => l.n || 0);
+  eq('a title with no line of its own lends no rank',
+    inums.every((n, i) => i === 0 || n <= inums[i - 1]), true);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
