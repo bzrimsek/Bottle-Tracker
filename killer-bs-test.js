@@ -7689,12 +7689,19 @@ sec('§235 what is worth looking up twice');
   eq('a bottle never asked about is asked about',
     L.shouldLookUp({}, 'a', today), true);
 
-  /* One empty answer is bad luck; two is a pattern. */
+  /* One empty answer is bad luck; two is a pattern. But a miss buys a
+     REST even before the limit: BZ ran the fill twice and got "the same
+     first 10" both times, because a bottle that came back empty was asked
+     again on the very next run and the list is sorted the same way every
+     time. Nothing about the answer changes between morning and evening. */
   let led = L.recordLookup({}, 'a', 'empty', today);
-  eq('one miss is not enough to stop asking',
-    L.shouldLookUp(led, 'a', today), true);
-  led = L.recordLookup(led, 'a', 'empty', today);
-  eq('two is', L.shouldLookUp(led, 'a', today), false);
+  eq('a miss is not re-asked the same day',
+    L.shouldLookUp(led, 'a', today), false);
+  eq('but it is a week later',
+    L.shouldLookUp(led, 'a', '2026-09-12'), true);
+  led = L.recordLookup(led, 'a', 'empty', '2026-09-12');
+  eq('and two misses buy the long rest',
+    L.shouldLookUp(led, 'a', '2026-10-01'), false);
   eq('and the misses are counted', led.a.no, 2);
 
   /* AN ERROR IS NOT A MISS. Credits running out and a model timing out
@@ -7715,10 +7722,16 @@ sec('§235 what is worth looking up twice');
   eq('a hit wipes the misses', mixed.c.no, 0);
   eq('and it is asked about again', L.shouldLookUp(mixed, 'c', today), true);
 
-  /* A MISS IS NOT PERMANENT. The library grows and sources appear. */
-  const old = { d: { ok: 0, no: 5, at: '2026-01-01' } };
+  /* A MISS IS NOT PERMANENT. The library grows and sources appear — and
+     the rest ESCALATES rather than becoming a blacklist: a week, then six
+     months, then a year. Five misses is a year, so January is not yet due
+     in September but the previous year is. */
+  const old = { d: { ok: 0, no: 5, at: '2025-01-01' } };
   eq('an old miss is worth one more try',
     L.shouldLookUp(old, 'd', today), true);
+  const midway = { d2: { ok: 0, no: 5, at: '2026-01-01' } };
+  eq('but a year has to pass first',
+    L.shouldLookUp(midway, 'd2', today), false);
   const recent = { e: { ok: 0, no: 5, at: '2026-09-01' } };
   eq('a recent one is not', L.shouldLookUp(recent, 'e', today), false);
   eq('the gap is counted in days',
@@ -9797,9 +9810,14 @@ sec('§265 what is left to do, not what is imperfect');
   eq('but not a month later',
     L.planLibraryFill(products, recent, today).ask.length, 1);
 
-  /* One miss is not enough to give up on a bottle. */
-  eq('a single miss still gets another go',
+  /* One miss is not enough to give up on a bottle — but it is enough to
+     stop asking again the same day, which is what put the same ten at the
+     top of two runs in a row. */
+  eq('a single miss is rested for the day',
     L.planLibraryFill(products, { b: { no: 1, at: today } }, today)
+      .ask.length, 1);
+  eq('and comes back the following week',
+    L.planLibraryFill(products, { b: { no: 1, at: '2026-08-01' } }, today)
       .ask.length, 2);
 }
 
@@ -9892,6 +9910,128 @@ sec('§267 an occupied slot that is still a gap');
     [{ k: 'z', name: 'Z', missing: ['proof'], got: { name: 'Z', proof: 120 } }],
     { z: 1 }, { z: { name: 'Z', proof: 100 } }, 1).updates;
   eq('a proof that is already there stands', u3['z/proof'], undefined);
+}
+
+/* §268  count, ask and write are ONE rule ---------------------------
+ *
+ * This corner bit five times in a day and every time for the same reason:
+ * three notions of "needs attention" that disagreed. libraryGaps said a
+ * bottle was short of notes; lookupFilled said an answer carrying only a
+ * name had brought something; the writer refused the slot because it was
+ * technically occupied. So the count said 120, the run asked, and nothing
+ * moved.
+ *
+ * BZ's specification: the count is entries NEW or last asked more than six
+ * months ago AND holding an open field; then process, and either write or
+ * park. All three steps ask L.slotOpen now, so they cannot drift.
+ */
+sec('§268 one rule, three steps');
+{
+  const prompt = { name: 'X', proof: 100, dist: 'H', sub: 'scotch',
+                   tn: { nose: 'a card prompt' }, tnFrom: 'A FLIGHT' };
+
+  /* The rule itself. A flight-card prompt does not fill the notes slot —
+     it was written to be read aloud beside five other pours. */
+  eq('a prompt leaves the notes slot open',
+    L.slotOpen(prompt, 'notes'), true);
+  eq('a real note fills it',
+    L.slotOpen({ tn: { nose: 'somebody wrote this' } }, 'notes'), false);
+  eq('a missing proof is open', L.slotOpen({}, 'proof'), true);
+  eq('and a proof that is there is not',
+    L.slotOpen({ proof: 90 }, 'proof'), false);
+
+  /* Step one: the count. */
+  eq('the count sees the open slot', L.libraryGaps(prompt), ['notes']);
+
+  /* Step two: an answer closes it only if the slot would accept what it
+     brings. A name closes nothing; notes close notes. */
+  eq('a name closes nothing',
+    L.gapsClosed({ name: 'X' }, ['notes']).length, 0);
+  eq('notes close notes',
+    L.gapsClosed({ nose: 'peat' }, ['notes']), ['notes']);
+  eq('and a price closes nothing it was not short of',
+    L.gapsClosed({ msrp: 90 }, ['notes']).length, 0);
+
+  /* Step three: the write goes in, because the writer asks the same
+     question the count asked. */
+  const u = L.libraryFillWrite(
+    [{ k: 'x', name: 'X', missing: ['notes'],
+       got: { name: 'X', nose: 'orchard fruit' } }],
+    { x: 1 }, { x: prompt }, 1).updates;
+  eq('the writer fills the slot the count called open', !!u['x/tn'], true);
+
+  /* And the loop closes: the entry is no longer short of anything, so it
+     does not come back on the next run for ever. */
+  const after = Object.assign({}, prompt,
+    { tn: u['x/tn'], tnSrc: u['x/tnSrc'], tnFrom: u['x/tnFrom'] });
+  eq('so the count falls', L.libraryGaps(after).length, 0);
+
+  /* A real note is still never overwritten — the rule protects what
+     somebody wrote, not what a flight card prompted. */
+  const real = { name: 'Y', proof: 100, dist: 'H', sub: 'scotch',
+                 tn: { nose: 'mine' } };
+  eq('a note somebody wrote is left alone',
+    L.libraryFillWrite(
+      [{ k: 'y', name: 'Y', missing: ['notes'],
+         got: { name: 'Y', nose: 'a guess' } }],
+      { y: 1 }, { y: real }, 1).updates['y/tn'], undefined);
+}
+
+/* §269  done, to do, waiting -----------------------------------------
+ *
+ * BZ: "so three lists — done, needs done, and waiting to do again."
+ *
+ * Everything before this reported ONE number, and one number cannot tell
+ * an entry nobody has asked about from one asked twice with nothing back.
+ * So the count did not move when a run finished and it looked broken every
+ * single time.
+ */
+sec('§269 the library in three lists');
+{
+  const today = '2026-09-04';
+  const done = { k: 'a', name: 'Complete', proof: 100, dist: 'H',
+                 sub: 'bourbon', tn: { nose: 'x' } };
+  const fresh = { k: 'b', name: 'Never Asked', proof: 100 };
+  const rested = { k: 'c', name: 'Asked Today', proof: 100 };
+  const products = [done, fresh, rested];
+  const ledger = { c: { no: 1, at: today } };
+
+  const l = L.libraryLists(products, ledger, today);
+  eq('a complete entry is done', l.done.length, 1);
+  eq('one nobody has asked about is to do', l.todo.length, 1);
+  eq('and one asked today is waiting', l.waiting.length, 1);
+
+  /* The invariant that all of this trouble came from: the three are
+     EXHAUSTIVE and they do not overlap. A list that could disagree with
+     another is what made the count sit still. */
+  eq('every entry is in exactly one list',
+    l.done.length + l.todo.length + l.waiting.length, products.length);
+  const keys = l.done.concat(l.todo, l.waiting).map(x => x.k);
+  eq('and no entry is in two', new Set(keys).size, keys.length);
+
+  /* Waiting says WHEN, so it is a queue rather than a black hole. */
+  eq('waiting knows how long is left', l.waiting[0].dueIn, 7);
+  eq('and how many times it has missed', l.waiting[0].misses, 1);
+
+  /* Worst first among what is due, because a bottle short of three things
+     is worth more of a lookup than one short of one. */
+  const many = L.libraryLists([
+    { k: 'x', name: 'One Gap', proof: 100, dist: 'H', sub: 'rye' },
+    { k: 'y', name: 'Everything Missing' }], {}, today);
+  eq('the emptiest entry is asked first', many.todo[0].k, 'y');
+  eq('and it scores lower', many.todo[0].score < many.todo[1].score, true);
+
+  /* The score is the headline: 100 is nothing left to get. */
+  eq('a complete entry scores 100', L.entryScore(done), 100);
+  eq('and one short of notes scores less',
+    L.entryScore({ proof: 100, dist: 'H', sub: 'rye' }), 75);
+
+  /* The rest escalates rather than blacklisting. A whisky nobody could
+     describe this year may be described next. */
+  eq('a first miss rests a week', L.restDays(1), 7);
+  eq('a second six months', L.restDays(2), 180);
+  eq('a third a year', L.restDays(3), 365);
+  eq('and a tenth is still a year, not for ever', L.restDays(10), 365);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
