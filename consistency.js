@@ -111,5 +111,23 @@ const mergeKeys = (mergeBlock.match(/'([a-zA-Z]+)'/g) || [])
 check('every mergeable key is actually synced',
   mergeKeys.filter(k => syncBlock.indexOf("'" + k + "'") < 0));
 
+/* 7. Three lists must agree: the state defaults, what is written to this
+      device (KEYS), and what follows the account (L.SYNC_KEYS). A key in
+      the defaults and not in KEYS does not survive a reload — which is
+      how six keys added in one day were living in memory only, including
+      the record of which tastings had already been applied. */
+const keysBlock = src.slice(src.indexOf('const KEYS = ['),
+  src.indexOf('const KEYS = [') + 900);
+check('every stored key survives a reload',
+  stateKeys.filter(k => keysBlock.indexOf("'" + k + "'") < 0
+    && ['filters', 'fflt', 'shop', 'shopMode', 'shopDim', 'lastList',
+        'base', 'reels', 'held', 'offerText', 'reelState', 'seenTips',
+        'installDismissed', 'libLedgerAt'].indexOf(k) < 0));
+
+/* 8. And anything that follows the account must be written down first. */
+check('everything synced is also saved locally',
+  (syncBlock.match(/'([a-zA-Z]+)'/g) || []).map(m => m.replace(/'/g, ''))
+    .filter(k => keysBlock.indexOf("'" + k + "'") < 0));
+
 console.log('\n  ' + (bad ? '\u2716 ' + bad + ' of ' + checks + ' checks found something'
   : '\u2713 all ' + checks + ' consistency checks pass'));

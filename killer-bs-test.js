@@ -1500,9 +1500,22 @@ eq('a known category is kept',
 eq('a region outside the six is dropped',
   L.parseLookup({ name: 'X', proof: 90, region: 'Yorkshire' }).region, null);
 
+/* `name` is NOT a filled field, and asserting that it was is what let the
+   fault through. A lookup always returns a name, so counting it meant an
+   answer carrying nothing else still read as FOUND — BZ was told 8 came
+   back, pressed Write, and got "Nothing new to write", because the writer
+   skips name and name was all there was. */
 eq('filled fields are listed',
   L.lookupFilled({ name: 'X', proof: 90, dist: null, age: 12 }).sort(),
-  ['age', 'name', 'proof']);
+  ['age', 'proof']);
+eq('a name on its own fills nothing',
+  L.lookupFilled({ name: 'Just A Name' }).length, 0);
+/* And notes count, because `notes` is one of the four gaps the fill is
+   hunting. They arrive flat from the service and as tn from a shelf. */
+eq('loose note columns count as notes',
+  L.lookupFilled({ name: 'X', nose: 'peat' }), ['notes']);
+eq('and a tn object does too',
+  L.lookupFilled({ name: 'X', tn: { nose: 'peat' } }), ['notes']);
 eq('nothing filled is empty', L.lookupFilled(null), []);
 
 eq('a query is appended', L.lookupUrl('https://x/exec', 'A B'),
