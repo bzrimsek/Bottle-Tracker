@@ -259,3 +259,38 @@ road trip planner, tasting night on phones.
 An in-step load writes **59 bytes** (was 220,096). One corrected bottle
 writes **56** (was 61,290). If either grows by orders of magnitude, the
 delta logic has regressed — `sync.js` prints both on every run.
+
+## Running the gate — SOP, set 2026-09-04
+
+BZ: "almost every time I ask, you give me the same answer." He was right.
+The gate takes several minutes and the habit was to run it silently and
+report at the end, so every check-in got "running the gate now" — a status
+line rather than an answer, and the reason he was asking at all.
+
+**Run the checks ONE AT A TIME and report each as it lands.** One line per
+check, as it finishes:
+
+    1/8 smoke ✓
+    2/8 tests ✓ 2577
+    3/8 twotab ✓
+
+Never run the whole loop in one command and report at the end. Never say
+"running the gate now" without a result attached — if there is nothing to
+report yet, say what is running and what came back last.
+
+The order, and what each one is for:
+
+1. `smoke.js` — the script parses and every screen draws
+2. `killer-bs-test.js` — the assertions
+3. `twotab.js` — two tabs do not fight
+4. `papers.js` — the printable output
+5. `render.js` — render functions do templating only
+6. `sync.js` — push, load, reload, refuse, and the byte counts
+7. `browser.js` — the walk through the real screens
+8. `audit.py` — the pre-delivery audit
+
+Read the WHOLE output of each, not the last line. `sync.js` timed out for
+several builds and reported nothing, because the last line was blank and
+the failure was thirty lines up: it had been clicking a Library pill that
+moved into Settings. A gate reported green while one of its checks had not
+run at all.

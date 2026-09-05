@@ -9520,5 +9520,207 @@ sec('§262 what a lookup answer keeps');
     L.libraryGaps(thin).length > 0, true);
 }
 
+/* §263  paying once for an answer ------------------------------------
+ *
+ * The pooled radar search made three asks a press, then verified every
+ * bottle each ask returned — and cached the lot under the LEAD ask's name.
+ * With a rotating start, the second press re-asked two questions it had
+ * just asked and re-verified their bottles. Six calls, then six more, for
+ * five distinct questions.
+ *
+ * Measured in the browser after the change: six calls, then two.
+ */
+sec('§263 an answer is paid for once');
+{
+  /* Pooling keeps the same bottle objects, which is what lets a second
+     press see they were already verified. */
+  const b1 = { name: 'Kavalan Solist', verified: true };
+  const b2 = { name: 'Starward Nova' };
+  const pooled = L.poolCandidates([{ bottles: [b1] }, { bottles: [b2] }]);
+  eq('the bottles come through, not copies of them',
+    pooled.bottles[0] === b1, true);
+  eq('so a verdict already on one is still there',
+    pooled.bottles[0].verified, true);
+
+  /* Deduping matters more once asks are pooled: neighbouring gaps return
+     the same bottle and verifying it twice is paying twice. */
+  const dupe = L.poolCandidates([
+    { bottles: [{ name: 'Kavalan Solist' }] },
+    { bottles: [{ name: 'kavalan  solist' }] }
+  ]);
+  eq('the same bottle from two asks is verified once',
+    dupe.bottles.length, 1);
+
+  /* A failed check is not evidence of absence and must be retried rather
+     than remembered as a no — the same rule the library ledger follows,
+     where an error is not a miss. */
+  eq('an ask that failed is not a cached answer',
+    L.poolCandidates([null]), null);
+  eq('but one that ran and found nothing is',
+    L.poolCandidates([{ bottles: [] }]).bottles.length, 0);
+
+  /* The cap is charged for what is actually fetched. A cached ask costs
+     nothing and must not be counted against the day. */
+  const today = '2026-09-04';
+  eq('two fetched asks count two',
+    L.countLookup({ date: today, n: 1 }, today, 2).n, 3);
+  eq('and nothing fetched counts nothing',
+    L.countLookup({ date: today, n: 3 }, today, 0).n, 3);
+}
+
+/* §263  paying once for the same question ---------------------------
+ *
+ * A radar press asks three questions and then verifies every bottle each
+ * one returns, so a press was six lookups and a second press was six more
+ * — even though the rotation only changes ONE of the three asks, and most
+ * of the bottles had already been checked.
+ *
+ * Measured in the browser before and after: press one 6 calls, press two
+ * 6. Now press one 6, press two 2.
+ *
+ * The rules that make it safe are what these assert. An ask is cached
+ * under its own phrase rather than under whichever happened to lead. A
+ * bottle is verified once, because whether a bottle EXISTS does not go
+ * stale the way a price does. And a FAILED check is never cached, because
+ * an error is not evidence that a whisky does not exist — the same rule
+ * the library ledger already follows.
+ */
+sec('§263 the same question is not paid for twice');
+{
+  /* Pooling keeps each ask's answers separable, which is what lets them
+     be cached one at a time. */
+  const r1 = { bottles: [{ name: 'A', verified: true }] };
+  const r2 = { bottles: [{ name: 'B', verified: true }] };
+  const pooled = L.poolCandidates([r1, r2]);
+  eq('two cached asks pool as one list', pooled.bottles.length, 2);
+  eq('and a missing one does not lose the rest',
+    L.poolCandidates([r1, null]).bottles.length, 1);
+  /* All three missing is a real empty answer, not a silent one: it means
+     nothing was cached and nothing came back. */
+  eq('nothing cached and nothing fetched is nothing',
+    L.poolCandidates([null, null]), null);
+
+  /* Dedupe is what stops a bottle two asks both found being verified
+     twice within one press. */
+  const dup = L.poolCandidates([
+    { bottles: [{ name: 'Kavalan Solist' }] },
+    { bottles: [{ name: 'kavalan solist' }] }]);
+  eq('the same bottle from two asks is verified once', dup.bottles.length, 1);
+
+  /* And the reason a verification can be kept at all: identity is stable.
+     A lookup answer keeps everything it was told, so a cached check
+     carries the full record rather than three fields of it. */
+  const full = L.parseLookup({ name: 'Kavalan Solist', proof: 114,
+    dist: 'Kavalan', sub: 'world', style: 'single malt', fin: 'Wine',
+    msrp: 250, obsc: 'niche' }, { needIdentity: false });
+  eq('a kept answer carries the cask', full.fin, 'Wine');
+  eq('and the category', full.sub, 'world');
+  eq('and how well known it is', full.obsc, 'niche');
+}
+
+/* §263  what has to follow an account ------------------------------
+ *
+ * BZ, watching the log: "worried about how local and non-local are
+ * acting." Two keys were wrong, and one was invisible.
+ *
+ * `libLedger` was declared mergeable in L.SYNC_MERGE and never appeared in
+ * SYNC_KEYS, so it has never synced at all — a declaration with nothing
+ * behind it. The ledger that stops the app paying twice for the same
+ * lookup was per device, and a second device paid the whole bill again.
+ *
+ * `tastingsSeen` was missing too, which costs more than a lookup: a
+ * tasting applied on a phone would be applied AGAIN on a desktop, logging
+ * the same pours twice.
+ */
+sec('§263 the keys that must not be per-device');
+{
+  /* Anything declared mergeable must actually be synced, or the
+     declaration is a comment. */
+  L.SYNC_MERGE.forEach(k => {
+    eq('mergeable key ' + k + ' is actually synced',
+      L.SYNC_KEYS.indexOf(k) >= 0, true);
+  });
+
+  /* A record of what has already happened must never shrink. */
+  eq('a ledger merges rather than replaces',
+    L.SYNC_MERGE.indexOf('libLedger') >= 0, true);
+  eq('and so does the list of applied tastings',
+    L.SYNC_MERGE.indexOf('tastingsSeen') >= 0, true);
+
+  const local = { 'uidA:1': 1, 'uidA:2': 1 };
+  const remote = { 'uidA:2': 1, 'uidB:9': 1 };
+  const merged = L.mergeSyncValue('tastingsSeen', local, remote);
+  eq('a merge keeps what this device had seen', merged['uidA:1'], 1);
+  eq('and what the account had seen', merged['uidB:9'], 1);
+  eq('so nothing is applied twice',
+    Object.keys(merged).length, 3);
+
+  /* A device with nothing must not wipe the account's record. */
+  eq('an empty local does not erase the account',
+    Object.keys(L.mergeSyncValue('libLedger', {}, { x: 1 })).length, 1);
+  /* And a missing remote leaves the device alone. */
+  eq('a missing remote keeps what is here',
+    L.mergeSyncValue('libLedger', { y: 1 }, null).y, 1);
+
+  /* Settings that describe the person, not the device, follow the
+     account: a rate typed on a desktop should not be missing on a phone. */
+  ['wishShared', 'fxRate'].forEach(k => {
+    eq(k + ' follows the account', L.SYNC_KEYS.indexOf(k) >= 0, true);
+  });
+  /* And they REPLACE rather than merge, because the newest answer wins. */
+  eq('a setting takes the newer value',
+    L.mergeSyncValue('fxRate', { n: 1.2 }, { n: 1.27 }).n, 1.27);
+}
+
+/* §264  the account is the system of record -------------------------
+ *
+ * BZ: "we need to make sure local is only used when online is not
+ * available; online is a clear preference."
+ *
+ * This was newest-wins on a timestamp, and "newer" is a claim each device
+ * makes about itself: a phone with a fast clock wins an argument it should
+ * lose, and one that has sat in a pocket can push a stale shelf over a
+ * good one the moment it wakes.
+ *
+ * The account wins by default. Local wins only where it holds work the
+ * account has never seen — changes saved while offline — which is the one
+ * case where the device genuinely knows something the account does not.
+ */
+sec('§264 online wins unless there is unsent work');
+{
+  const T = 1000, LATER = 2000, MUCH_LATER = 3000;
+
+  /* The ordinary case: this device is up to date, so take the account. */
+  eq('a device with nothing unsent takes the account',
+    L.syncDecision(T, LATER, T), 'remote');
+  /* Even when the local stamp is NEWER — that is exactly the stale-phone
+     case, where local looks newer and has nothing the account lacks. */
+  eq('and it does so even when local looks newer',
+    L.syncDecision(MUCH_LATER, T, MUCH_LATER), 'remote');
+
+  /* Work saved after the last successful push has never left the device,
+     and taking the account copy would throw it away. */
+  eq('unsent work keeps this device',
+    L.syncDecision(LATER, MUCH_LATER, T), 'local');
+  eq('however far ahead the account is',
+    L.syncDecision(LATER, 99999, T), 'local');
+
+  /* A device that has never saved has nothing to defend. */
+  eq('a fresh device takes the account', L.syncDecision(0, T, 0), 'remote');
+  /* An account with no stamp is an OLDER account rather than an empty
+     one — the caller has already established there is data there — so it
+     still wins. §200 has asserted this since before the stamp existed,
+     and a first pass at this change got it backwards. */
+  eq('an unstamped account is old, not empty',
+    L.syncDecision(T, 0, 0), 'remote');
+
+  /* No push stamp: this device predates the change, so fall back to the
+     old comparison rather than silently discarding whatever is on it. */
+  eq('a device from before this change is not wiped',
+    L.syncDecision(MUCH_LATER, T, 0), 'local');
+  eq('and still takes a newer account',
+    L.syncDecision(T, MUCH_LATER, 0), 'remote');
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
