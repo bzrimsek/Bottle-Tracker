@@ -9722,5 +9722,61 @@ sec('§264 online wins unless there is unsent work');
     L.syncDecision(T, MUCH_LATER, 0), 'remote');
 }
 
+/* §265  the missing count is work outstanding ------------------------
+ *
+ * BZ ran a fill: 124 missing, asked 30, found 28 — and the count went to
+ * 115 rather than 96. Then he published 3 and it went UP to 118. "The math
+ * makes no sense."
+ *
+ * It followed from counting raw gaps. A bottle already asked about, where
+ * nothing came back, stayed in the total for ever; and every newly
+ * published bottle joined it. The number could only ever climb, which
+ * makes it useless as a measure of work left.
+ *
+ * The headline is what a run would actually ASK about. Everything else is
+ * still short of something, and is said separately.
+ */
+sec('§265 what is left to do, not what is imperfect');
+{
+  const today = '2026-09-04';
+  const full = { k: 'a', name: 'Complete', proof: 100, dist: 'H',
+                 sub: 'bourbon', tn: { nose: 'x' } };
+  const thin1 = { k: 'b', name: 'Thin One', proof: 100 };
+  const thin2 = { k: 'c', name: 'Thin Two', proof: 100 };
+  const products = [full, thin1, thin2];
+
+  /* Nothing asked yet: both gaps are work. */
+  const fresh = L.planLibraryFill(products, {}, today);
+  eq('a complete bottle is not work', fresh.ask.length, 2);
+  eq('and nothing is being skipped yet', fresh.skip.length, 0);
+
+  /* Asked twice and nothing came back: no longer work outstanding, and it
+     must stop inflating the number for ever. */
+  const ledger = { b: { no: L.LOOKUP_MISS_LIMIT, at: today } };
+  const after = L.planLibraryFill(products, ledger, today);
+  eq('a bottle already asked about drops out of the work',
+    after.ask.length, 1);
+  eq('but it is still counted as short of something',
+    after.skip.length, 1);
+  eq('and it is the right one', after.skip[0].k, 'b');
+
+  /* A good chunk of time before asking again. BZ: "we should allow for a
+     time period to check again, but a good chunk of time." Ninety days
+     was too eager — a whisky nothing could describe in March is unlikely
+     to be describable in June, and asking costs a real lookup. */
+  eq('half a year before trying again', L.TRY_AGAIN_AFTER, 180);
+  const stale = { b: { no: L.LOOKUP_MISS_LIMIT, at: '2026-01-01' } };
+  eq('and after that it is asked once more',
+    L.planLibraryFill(products, stale, '2026-09-04').ask.length, 2);
+  const recent = { b: { no: L.LOOKUP_MISS_LIMIT, at: '2026-08-01' } };
+  eq('but not a month later',
+    L.planLibraryFill(products, recent, today).ask.length, 1);
+
+  /* One miss is not enough to give up on a bottle. */
+  eq('a single miss still gets another go',
+    L.planLibraryFill(products, { b: { no: 1, at: today } }, today)
+      .ask.length, 2);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
