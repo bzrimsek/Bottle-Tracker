@@ -55,6 +55,76 @@ const dir='/home/claude/kb';
       catch (e) { r[nm] = 'THREW ' + e.message; }
     });
 
+    /* The MODALS, which nothing else opens.
+
+       Every screen check draws a page; none of them opens the sheets that
+       sit on top, and that is where a whole day of bugs lived — a fill
+       that offered two entries, a take-back with no detail, a finder that
+       looked like an explainer. Opening one and counting what it drew is
+       enough to catch a throw or an empty sheet. */
+    LIB.products = {};
+    for (let i = 0; i < 12; i++) {
+      LIB.products['e' + i] = { name: 'Entry ' + i, proof: 100,
+        dist: 'House ' + i, sub: 'scotch' };
+    }
+    LIB.admin = true;
+    S.lookupUrl = 'https://example.invalid/lookup';
+    [['fill', () => libraryFillStart(LIB.products, () => {})],
+     ['import', () => importDialog()],
+     ['receipts', () => receiptsDialog()],
+     ['bottle form', () => productForm(null)]].forEach(([nm, open]) => {
+      try {
+        open();
+        const m2 = document.getElementById('modal');
+        const n = m2 ? m2.querySelectorAll('button,input,textarea').length : 0;
+        r['modal:' + nm] = n ? 'ok(' + n + ')' : 'EMPTY';
+        closeModal();
+      } catch (e) { r['modal:' + nm] = 'THREW ' + e.message; }
+    });
+    /* The fill must offer the RIGHT NUMBER, read off the sheet it draws.
+
+       It offered two when the library held 422, because the snapshot was
+       keyed on a field the rows do not carry and they all collapsed into
+       one bucket. Asking the list helper directly would not have caught
+       it — the fault was in the snapshot, between the helper and the
+       screen — so this reads the heading the person actually sees. */
+    try {
+      libraryFillStart(LIB.products, () => {});
+      const head = document.querySelector('#modal .modalhd h2');
+      const said = head ? (head.textContent.match(/\d+/) || ['0'])[0] : '0';
+      r.fillOffers = (Number(said) === 12)
+        ? 'ok(12)' : 'THREW the sheet offered ' + said + ' of 12';
+      closeModal();
+    } catch (e) { r.fillOffers = 'THREW ' + e.message; }
+
+    /* ICONS THAT ARE ACTUALLY VISIBLE.
+
+       A touch-target fix gave the masthead buttons a ::before carrying the
+       visible box. The pseudo-element is positioned and the gear glyph is
+       not, so the box painted over the top and both buttons came out
+       blank — a fix that deleted the icons, and nothing caught it because
+       the button was still there, still 44px, still tappable.
+
+       Anything that is a button with no text needs something inside it a
+       person can see. */
+    const blind = [];
+    document.querySelectorAll('button').forEach(el2 => {
+      const r2 = el2.getBoundingClientRect();
+      if (!r2.width || !r2.height) return;
+      const hasText = el2.textContent.trim().length > 0;
+      const hasSvg = !!el2.querySelector('svg, img');
+      /* The sync dot is a coloured circle by design — it IS the icon, drawn
+         in CSS, and it carries an aria-label. Excluded by name rather than
+         by weakening the rule to "or has a background", which would let a
+         genuinely blank button through. */
+      if (el2.id === 'syncDotMast') return;
+      if (!hasText && !hasSvg) {
+        blind.push(el2.id || el2.className || 'button');
+      }
+    });
+    r.blankButtons = blind.length ? 'THREW ' + blind.slice(0, 4).join(', ')
+      : 'ok';
+
     // and a named bottle, which is the half being extracted
     try {
       S.shopMode='store'; document.getElementById('shopQ').value='Ardbeg Ten';

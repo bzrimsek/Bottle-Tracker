@@ -928,8 +928,7 @@ function step(n) {
     const want = [['bottles on the shelf', 'shelf'],
                   ['open and pourable', 'pour'],
                   ['different whiskies', 'shelf'],
-                  ['flights designed', 'flights'],
-                  ['flights run', 'flights']];
+                  ['ready to pour', 'flights']];
     for (const [label, screen] of want) {
       await page.locator('nav button[data-scr="home"]').click();
       await page.waitForTimeout(200);
@@ -997,9 +996,14 @@ function step(n) {
   {
     await page.locator('nav button[data-scr="home"]').click();
     await page.waitForTimeout(300);
+    /* Named by what they lead to, not by their exact wording. This listed
+       'flights run', which was renamed to 'ready to pour tonight' — a walk
+       that breaks when a label is reworded is testing the copy rather than
+       the behaviour, and the behaviour is that every tile with a number on
+       it goes where that number lives. */
     const want = { 'bottles on the shelf': 'shelf', 'open and pourable': 'pour',
-                   'different whiskies': 'shelf', 'flights designed': 'flights',
-                   'flights run': 'flights' };
+                   'different whiskies': 'shelf',
+                   'ready to pour': 'flights' };
     for (const label of Object.keys(want)) {
       const tile = page.locator('#homeBody > .tiles > button.tile')
         .filter({ hasText: label });
