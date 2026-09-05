@@ -10184,5 +10184,586 @@ sec('§271 rows carry the key the map holds them under');
     true);
 }
 
+/* §272  a real note is not a prompt to take back --------------------
+ *
+ * BZ ran a fill: 118 to do, 8 asked, 7 written, 110 left — the loop
+ * working — and then the library offered to take back seven notes. The
+ * seven it had just correctly written.
+ *
+ * promptNotesInLibrary flagged any library entry whose SHELF copy carried
+ * a flight-card note. The shelf keeps its prompt; the fill writes a real
+ * note into the LIBRARY. Two different objects, and only one of them has a
+ * prompt in it.
+ */
+sec('§272 taking back only what was invented');
+{
+  const shelf = { a: { k: 'a', name: 'Aberlour A Bunadh',
+                       tnFrom: 'PEAT IS A POSTCODE',
+                       tn: { nose: 'the prompt text' } } };
+  const key = L.libKey('Aberlour A Bunadh');
+
+  /* Written by a lookup: it has a source, which a published prompt never
+     had, and the words differ from the prompt. Not ours to take back. */
+  eq('a note the fill wrote is left alone',
+    L.promptNotesInLibrary(shelf,
+      { [key]: { name: 'Aberlour A Bunadh', tn: { nose: 'sherry' },
+                 tnSrc: 'model' } }).length, 0);
+  eq('and so is one whose words differ from the prompt',
+    L.promptNotesInLibrary(shelf,
+      { [key]: { name: 'Aberlour A Bunadh',
+                 tn: { nose: 'something else entirely' } } }).length, 0);
+
+  /* The thing this exists for: the prompt itself, published before
+     libraryEntry was taught not to. */
+  eq('the prompt itself is still offered back',
+    L.promptNotesInLibrary(shelf,
+      { [key]: { name: 'Aberlour A Bunadh',
+                 tn: { nose: 'the prompt text' } } }).length, 1);
+
+  /* A shelf bottle with no prompt is never in question. */
+  eq('a shelf note that was never a prompt is not flagged',
+    L.promptNotesInLibrary(
+      { b: { k: 'b', name: 'Blue Spot', tn: { nose: 'mine' } } },
+      { [L.libKey('Blue Spot')]: { name: 'Blue Spot',
+                                   tn: { nose: 'mine' } } }).length, 0);
+  eq('and an empty library offers nothing back',
+    L.promptNotesInLibrary(shelf, {}).length, 0);
+}
+
+/* §273  a number as a spreadsheet writes it -------------------------
+ *
+ * parseFloat('1,200') is 1. Not NaN, not 1200 — ONE, silently, and it
+ * passes validation because 1 is a perfectly good number. A bottle whose
+ * price was typed or pasted as 1,200 became a one-dollar bottle and
+ * nothing anywhere said so.
+ *
+ * Every spreadsheet writes thousands with a comma and both importers take
+ * their numbers from spreadsheets, so this was a live path to quietly
+ * wrong data rather than a curiosity.
+ */
+sec('§273 reading a number people actually type');
+{
+  eq('a thousands comma is not a decimal point',
+    L.readNumber('1,200'), 1200);
+  eq('a currency symbol comes off', L.readNumber('$1,200'), 1200);
+  eq('and so does surrounding space', L.readNumber(' 1200 '), 1200);
+  eq('a plain number is itself', L.readNumber('1200'), 1200);
+  eq('and a decimal survives', L.readNumber('92.4'), 92.4);
+  eq('a larger number too', L.readNumber('12,345'), 12345);
+
+  /* Refused rather than guessed. '1,2' is not 12 and not 1 — it is
+     somebody's typo, and inventing a value from it is how a wrong price
+     gets into a shared library. */
+  eq('a comma that is not a thousands separator is refused',
+    L.readNumber('1,2'), null);
+  eq('words are refused', L.readNumber('twelve'), null);
+  eq('empty is nothing', L.readNumber(''), null);
+  eq('and so is missing', L.readNumber(null), null);
+  eq('a number stays a number', L.readNumber(1200), 1200);
+  eq('and an impossible one is refused', L.readNumber(Infinity), null);
+
+  /* The validator uses it, so a comma-formatted price is accepted rather
+     than silently truncated. */
+  eq('a comma price validates clean',
+    L.validateProduct({ name: 'Ardbeg Ten', proof: 92, msrp: '1,200' }).length,
+    0);
+  eq('and a nonsense price still does not',
+    L.validateProduct({ name: 'Ardbeg Ten', proof: 92, msrp: 'lots' })
+      .join(' '), 'Price must be a number.');
+}
+
+/* §274  a glass somewhere else --------------------------------------
+ *
+ * BZ: logging a pour when out at a restaurant or bar, and optionally
+ * adding it to the wishlist. Two halves of one moment — you drink
+ * something you do not own, and either you liked it or you did not.
+ *
+ * What makes it different from an ordinary pour is that there is no
+ * bottle, so the entry carries the NAME. historyRows dropped any pour
+ * whose bottle the catalogue did not know, which was right when every pour
+ * came off your own shelf and would have made an away pour invisible the
+ * moment it was logged.
+ */
+sec('§274 pouring something you do not own');
+{
+  const cat = { a: { k: 'a', name: 'Ardbeg Ten' } };
+  const bs = [{ k: 'a', status: 'open' }];
+
+  const away = L.awayPour('Yamazaki 18', 'The Aviary', cat, '2026-09-05');
+  eq('it is a pour', away.kind, 'pour');
+  eq('with no bottle behind it', away.k, null);
+  eq('carrying its own name', away.away, 'Yamazaki 18');
+  /* Where, as PARTS rather than a sentence, so the log can be grouped by
+     city later. */
+  eq('and where it happened', L.placeLine(away.at2), 'The Aviary');
+
+  /* Drinking your OWN bottle at a bar is still drinking your own bottle. */
+  const mine = L.awayPour('Ardbeg Ten', 'A bar', cat, '2026-09-05');
+  eq('a whisky you own is an ordinary pour', mine.k, 'a');
+  eq('and does not carry a name of its own', mine.away, undefined);
+  /* Left exactly as typed: tidyName only touches all-caps or all-lower,
+     so mixed case is somebody's own capitals and stays. */
+  eq('but still remembers where', L.placeLine(mine.at2), 'A bar');
+
+  eq('a blank name is not a pour', L.awayPour('', 'x', cat), null);
+  eq('nor is one letter', L.awayPour('X', 'x', cat), null);
+  eq('and where is optional', !!L.awayPour('Yamazaki 18', '', cat), true);
+
+  /* It has to SURVIVE in the log, which is the part that would have been
+     missed: the row is filtered on the catalogue knowing the bottle. */
+  const rows = L.historyRows([away], cat, [], 'pour');
+  eq('an away pour appears in the log', rows.length, 1);
+  eq('under the name it was given', rows[0].label, 'Yamazaki 18');
+  eq('and an ordinary pour still resolves from the catalogue',
+    L.historyRows([mine], cat, [], 'pour')[0].label, 'Ardbeg Ten');
+
+  /* The wishlist half is asked only when there is something to ask. */
+  eq('something you do not own is worth offering',
+    L.awayWishable('Yamazaki 18', cat, bs, []), true);
+  eq('something on the shelf is not',
+    L.awayWishable('Ardbeg Ten', cat, bs, []), false);
+  eq('nor is something already wanted',
+    L.awayWishable('Yamazaki 18', cat, bs, [{ name: 'yamazaki 18' }]), false);
+  eq('and a blank name is never offered',
+    L.awayWishable('', cat, bs, []), false);
+
+  /* WHERE, as parts rather than a sentence. BZ: be smart about the
+     location — place, city, state. A free-text field is one thing to type
+     and nothing to group by; parts mean the log can later answer what was
+     drunk in Atlanta, or at that one bar. Typed as ONE line, because at a
+     bar nobody fills in three boxes. */
+  const bucket = L.parsePlace('The Bucket Shop, Atlanta GA');
+  eq('the bar comes out', bucket.place, 'The Bucket Shop');
+  eq('the city comes out', bucket.city, 'Atlanta');
+  eq('and the state', bucket.state, 'GA');
+  eq('a comma before the state changes nothing',
+    L.placeLine(L.parsePlace('The Bucket Shop, Atlanta, GA')),
+    'The Bucket Shop, Atlanta, GA');
+  eq('a city with no state still splits',
+    L.parsePlace('The Bucket Shop, Atlanta').city, 'Atlanta');
+  eq('somewhere outside the states keeps its city',
+    L.parsePlace('Bar Leone, Hong Kong').city, 'Hong Kong');
+
+  /* Anything it cannot split stays WHOLE rather than being guessed at. */
+  eq('no comma means no guessing',
+    L.parsePlace('The Bucket Shop Atlanta').place,
+    'The Bucket Shop Atlanta');
+  eq('a bare name is a place',
+    L.parsePlace('Bucket Shop').place, 'Bucket Shop');
+  eq('nothing typed is nothing', L.parsePlace(''), null);
+  eq('two letters that are not a state are not a state',
+    L.parsePlace('The Bucket Shop, Atlanta XQ').city, 'Atlanta XQ');
+
+  /* Tidied where nothing was said about case, the same rule bottle names
+     follow: somebody typing at a bar does not want to read it back in
+     lower case. */
+  eq('typed in a hurry, read back properly',
+    L.placeLine(L.parsePlace('bucket shop, atlanta ga')),
+    'Bucket Shop, Atlanta, GA');
+
+  /* And a place already used is one tap next time, matched on what it
+     resolves to rather than on what was typed. */
+  const hist = [
+    L.awayPour('A Whisky', 'The Bucket Shop, Atlanta GA', {}, '2026-09-05'),
+    L.awayPour('B Whisky', 'bucket shop, atlanta ga', {}, '2026-09-04'),
+    L.awayPour('C Whisky', 'Jack Rose, Washington DC', {}, '2026-09-03')
+  ];
+  const places = L.recentPlaces(hist, 4);
+  eq('the same bar typed twice is one place', places.length, 2);
+  eq('most recent first',
+    L.placeLine(places[0]), 'The Bucket Shop, Atlanta, GA');
+  eq('a pour with nowhere attached offers nothing',
+    L.recentPlaces([L.awayPour('D Whisky', '', {}, '2026-09-05')], 4).length,
+    0);
+}
+
+/* §275  a pour at somebody's house ----------------------------------
+ *
+ * BZ asked whether a place needs a TYPE — hotel, restaurant, bar, buddy's
+ * house, wedding. For most of those the answer is no: it is another field
+ * to fill standing at a bar, "The Bucket Shop" already says it is a bar,
+ * and a category nothing acts on is data that looks like insight and is
+ * not.
+ *
+ * A buddy's house earns it, because it has a BEHAVIOUR rather than a
+ * label. Their shelf probably holds the bottle, so the app can name it
+ * properly instead of trusting a spelling typed in somebody's kitchen.
+ */
+sec('§275 poured at a buddy\u2019s');
+{
+  const shelves = {
+    u1: { name: 'Marcus',
+          custom: { x: { k: 'x', name: 'Yamazaki 18 Year Old' } },
+          bottles: [{ k: 'x', status: 'open' }] },
+    u2: { name: 'Ellen', custom: {}, bottles: [] }
+  };
+
+  const places = L.buddyPlaces(shelves);
+  eq('every shared shelf is a place', places.length, 2);
+  eq('named, and in order', places[0].name, 'Ellen');
+  eq('nobody shared is nowhere to go', L.buddyPlaces({}).length, 0);
+
+  /* The point of it: a name half-remembered in a kitchen resolves to the
+     bottle they actually own. */
+  eq('a half-remembered name finds their bottle',
+    L.buddyBottle('Yamazaki 18', shelves.u1).name, 'Yamazaki 18 Year Old');
+  eq('and an exact one still does',
+    L.buddyBottle('Yamazaki 18 Year Old', shelves.u1).name,
+    'Yamazaki 18 Year Old');
+  /* But it does not invent: something they do not own is not theirs. */
+  eq('something they do not own is not found',
+    L.buddyBottle('Ardbeg Ten', shelves.u1), null);
+  eq('an empty shelf holds nothing',
+    L.buddyBottle('Yamazaki 18', shelves.u2), null);
+  eq('and two letters are not a bottle',
+    L.buddyBottle('Ya', shelves.u1), null);
+  eq('nor is nothing at all', L.buddyBottle('', shelves.u1), null);
+  eq('a missing shelf is not an error',
+    L.buddyBottle('Yamazaki 18', null), null);
+
+  /* A buddy who has NEVER HEARD of this app is typed rather than tapped,
+     and people type the same house three ways. Left alone that is three
+     chips for one kitchen within a month, which makes the list of places
+     useless — the same fault the buddy chip avoids by being a button. */
+  ['Marcus\'s', 'Marcus\'s house', 'at Marcus\'s', 'marcus\'s place']
+    .forEach(typed => {
+      eq('"' + typed + '" is one place',
+        L.placeLine(L.parsePlace(typed)), 'Marcus\u2019s');
+    });
+  /* It NORMALISES and does not classify. An earlier version read the
+     apostrophe as meaning somebody's home — a guess, and BZ knows a man
+     called Jack Rose while Washington has a bar called Jack Rose.
+     Punctuation cannot tell them apart, so the type is ASKED. */
+  eq('nothing is inferred from an apostrophe',
+    L.parsePlace('Marcus\'s house').kind, undefined);
+  eq('a stated type is kept',
+    L.parsePlace('Jack Rose', 'bar').kind, 'bar');
+  eq('the same name can be a house instead',
+    L.parsePlace('Jack Rose\'s', 'a house').kind, 'a house');
+  /* parsePlace takes whatever kind it is handed, length-checked, because
+     the long tail is free text and it cannot know the list. The refusing
+     is placeKind's job, which is what the screen calls. */
+  eq('a kind reaches the place as given',
+    L.parsePlace('Jack Rose', 'cigar lounge').kind, 'cigar lounge');
+  eq('and an invented one is refused before it gets there',
+    L.placeKind('speakeasy', ''), null);
+
+  /* The list covers OCCASIONS as well as rooms. BZ: "distillery, wedding,
+     where else — this helps folks remember", and then "it's both. Usually
+     a place, not always." Nobody recalls the ballroom; they recall the
+     wedding. One list, because you only pick once. */
+  eq('a distillery is a kind of place',
+    L.parsePlace('Springbank, Campbeltown', 'distillery').kind, 'distillery');
+  eq('and the city still comes out of it',
+    L.parsePlace('Springbank, Campbeltown', 'distillery').city, 'Campbeltown');
+  eq('a wedding is a kind of occasion',
+    L.parsePlace('Tom and Kate\'s wedding', 'wedding').kind, 'wedding');
+  /* And it is NOT read as somebody's house, because it does not end where
+     a house ends. */
+  /* Untouched, apostrophe and all: the normaliser only rewrites something
+     it recognises as a house, and a wedding is not one. */
+  eq('an occasion named after people stays whole',
+    L.parsePlace('Tom and Kate\'s wedding', 'wedding').place,
+    'Tom and Kate\'s wedding');
+  eq('every offered kind is accepted',
+    L.PLACE_KINDS.filter(k =>
+      L.parsePlace('Somewhere', k).kind !== k).length, 0);
+
+  /* THE LONG TAIL. A cigar lounge, a hunting camp, a golf course, a
+     rooftop in Tokyo — the list would never be finished, and the rare
+     occasion is exactly the one somebody wants recorded properly. */
+  eq('a kind from the list is taken as it is',
+    L.placeKind('distillery', ''), 'distillery');
+  eq('and the list wins over anything typed beside it',
+    L.placeKind('distillery', 'ignored'), 'distillery');
+  eq('something else is whatever they called it',
+    L.placeKind(L.PLACE_OTHER, 'Cigar Lounge'), 'cigar lounge');
+  eq('something else with nothing typed is nothing',
+    L.placeKind(L.PLACE_OTHER, ''), null);
+  eq('and one letter is not a kind',
+    L.placeKind(L.PLACE_OTHER, 'x'), null);
+  eq('nothing chosen is nothing', L.placeKind('', ''), null);
+  /* Clipped rather than refused: somebody who pastes a paragraph still
+     gets a usable label instead of nothing. */
+  eq('a paragraph is cut to a label',
+    L.placeKind(L.PLACE_OTHER, 'x'.repeat(80)).length, 24);
+  /* A made-up kind is not accepted through the front door — it has to
+     come through "something else", which is the honest route. */
+  eq('an invented kind is refused',
+    L.placeKind('speakeasy', ''), null);
+
+  /* And the ORDER matters, because the common answers should be the ones
+     nobody scrolls to. */
+  eq('a bar is first', L.PLACE_KINDS[0], 'bar');
+  eq('and a wake is not', L.PLACE_KINDS.indexOf('a wake') > 8, true);
+  eq('two names still work',
+    L.placeLine(L.parsePlace('Dave and Sue\'s')), 'Dave and Sue\u2019s');
+
+  /* A BAR is not a person. "Jack Rose" has no apostrophe and stays what
+     it is, and a possessive with a city attached is a venue rather than a
+     kitchen. */
+  eq('a possessive with a city keeps its city',
+    L.parsePlace('Charlie\'s, Atlanta GA').city, 'Atlanta');
+  /* And the type rides on the pour, so it can be grouped later. */
+  eq('a pour carries the type it was told',
+    L.awayPour('Blue Spot', 'Jack Rose, Washington DC', {}, '2026-09-05',
+      'bar').at2.kind, 'bar');
+}
+
+/* §276  what you thought, and what you will not open ----------------
+ *
+ * The app knew 325 bottles and nothing about which ones BZ likes: no
+ * favourites, no notes he wrote, no ratings anywhere. Everything it said
+ * about his taste was inferred from what he BOUGHT — and buying is a guess
+ * about a whisky while drinking is the verdict on it.
+ *
+ * What was already there asked for a nose, a palate and a finish at the
+ * end of a glass, and 325 bottles later not one had been written. The ask
+ * was too big for the moment it was made in.
+ */
+sec('§276 worth it, and one to keep');
+{
+  const hist = [
+    { kind: 'pour', k: 'a', verdict: 'again', at: '2026-09-05' },
+    { kind: 'pour', k: 'a', verdict: 'fine', at: '2026-08-01' },
+    { kind: 'pour', k: 'b', verdict: 'not for me', at: '2026-09-04' },
+    { kind: 'pour', k: 'c', at: '2026-09-03' },
+    { kind: 'pour', k: null, away: 'Yamazaki 18', verdict: 'again',
+      at: '2026-09-02' }
+  ];
+
+  eq('three answers, not a hundred-point score', L.VERDICTS.length, 3);
+  /* The most recent wins: tastes change and a shelf should follow. */
+  eq('the newest opinion stands', L.verdictOf('a', hist), 'again');
+  eq('a pour with no opinion has none', L.verdictOf('c', hist), null);
+  eq('and a bottle never poured has none', L.verdictOf('zz', hist), null);
+
+  eq('every opinion is counted once', L.verdicts(hist).length, 3);
+  const split = L.verdictSplit(hist);
+  eq('what to come back to', split.again.length, 2);
+  eq('and what not to', split['not for me'].length, 1);
+  /* A verdict on something you do not own counts too — the glass at the
+     bar is exactly where somebody learns they want a bottle. */
+  eq('an away pour can carry an opinion',
+    split.again.some(v => v.name === 'Yamazaki 18'), true);
+  eq('nothing poured is nothing to say', L.verdicts([]).length, 0);
+
+  /* The WISHLIST follows the verdict, not the absence.
+
+     The away pour asked about the wishlist because the bottle was not on
+     the shelf, which is the wrong reason: not owning something is not a
+     reason to want it, liking it is. So "again" is what earns the offer,
+     and the wishlist entry can finally say why it is there. */
+  const cat2 = { a: { k: 'a', name: 'Ardbeg Ten' } };
+  const bs2 = [{ k: 'a', status: 'open' }];
+  eq('something you liked and do not own is wishable',
+    L.awayWishable('Yamazaki 18', cat2, bs2, []), true);
+  eq('but liking something you already own adds nothing',
+    L.awayWishable('Ardbeg Ten', cat2, bs2, []), false);
+  eq('and nor does liking what is already wanted',
+    L.awayWishable('Yamazaki 18', cat2, bs2, [{ name: 'Yamazaki 18' }]),
+    false);
+
+  /* DO NOT OPEN. BZ: a bottle held for a birth year, an unrepeatable
+     release, one bought as a gift. It is on the shelf and it is not
+     available — a third state rather than a kind of sealed. Sealed means
+     not yet; a keeper means not for now. */
+  const bs = [{ k: 'a', status: 'open' }, { k: 'b', status: 'sealed' },
+              { k: 'c', status: 'keep' }, { k: 'd', status: 'gone' }];
+  eq('a keeper is owned', L.isOwned(bs[2]), true);
+  eq('and counted on the shelf', L.ownedCounts(bs).c, 1);
+  eq('but it is never pourable', L.pourable('c', bs), false);
+  eq('and it is not sealed either', L.isSealed(bs[2]), false);
+  eq('a sealed bottle still is', L.isSealed(bs[1]), true);
+  eq('an open one is still open', L.pourable('a', bs), true);
+  eq('and a gone one is gone', L.isOwned(bs[3]), false);
+}
+
+/* §277  the recap ---------------------------------------------------
+ *
+ * BZ: "the Bottle reCap. Specify a time frame."
+ *
+ * Everything the log holds went IN and none of it came out. A glass at
+ * The Bucket Shop was recorded with a place, a city and a kind, and
+ * nothing anywhere could answer what you drank at bars this year, or at
+ * Marcus's, or on that trip.
+ */
+sec('§277 reading the log back');
+{
+  const today = '2026-09-05';
+  const cat = { a: { k: 'a', name: 'Ardbeg Ten', dist: 'Ardbeg' },
+                b: { k: 'b', name: 'Blue Spot', dist: 'Spot' } };
+  const hist = [
+    L.awayPour('Yamazaki 18', 'The Bucket Shop, Atlanta GA', {},
+      '2026-09-04', 'bar'),
+    L.awayPour('Redbreast 12', 'Jack Rose, Washington DC', {},
+      '2026-08-20', 'bar'),
+    { kind: 'pour', k: 'a', at: '2026-09-01', verdict: 'again' },
+    { kind: 'pour', k: 'a', at: '2026-08-15' },
+    { kind: 'pour', k: 'b', at: '2026-03-01', verdict: 'not for me' },
+    { kind: 'flight', flight: 'PEAT NIGHT', at: '2026-09-02' }
+  ];
+
+  /* THE TIME FRAME, which is the part BZ asked for. A pour in March is
+     not part of the last month and is part of the last year. */
+  eq('a month holds what happened in it',
+    L.recap(hist, cat, 'month', today).pours, 4);
+  eq('and a year holds more', L.recap(hist, cat, 'year', today).pours, 5);
+  eq('all of it holds everything',
+    L.recap(hist, cat, 'all', today).pours, 5);
+  eq('a window nobody offered is all of it',
+    L.recap(hist, cat, 'decade', today).pours, 5);
+
+  const year = L.recap(hist, cat, 'year', today);
+  eq('the same whisky twice is one whisky', year.different, 4);
+  eq('and it is the most poured', year.whiskies[0].name, 'Ardbeg Ten');
+  eq('counted', year.whiskies[0].n, 2);
+  eq('the house is counted too', year.houses[0].name, 'Ardbeg');
+
+  /* WHERE, which is the whole reason the place was parsed into parts. */
+  eq('every place is listed', year.places.length, 2);
+  eq('the kinds are counted', year.kinds[0].name, 'bar');
+  eq('and the cities', year.cities.length, 2);
+  eq('away and home are separated', year.away, 2);
+  eq('with the rest at home', year.home, 3);
+
+  eq('flights are counted apart from pours', year.flights, 1);
+  eq('and so are the verdicts', year.again, 1);
+  eq('both ways', year.notForMe, 1);
+
+  /* A stretch with nothing in it says so rather than showing zeroes. */
+  const empty = L.recap([], cat, 'month', today);
+  eq('nothing logged is nothing to recap', empty.pours, 0);
+  eq('and it says so', L.recapLine(empty), 'Nothing logged in that stretch.');
+  eq('one pour reads as one', L.recapLine(
+    L.recap([{ kind: 'pour', k: 'a', at: today }], cat, 'month', today)),
+    '1 pour');
+
+  /* IN WORDS, on demand. BZ: "ok want it on demand." Not on every tap — a
+     paragraph that rewrites itself each time you change the window is
+     noise, and it costs a lookup for numbers already on the screen.
+
+     What goes out is the COUNTS, never the log. */
+  const ask = L.recapAsk(year, 'the last year');
+  eq('it asks for a recap', ask.mode, 'recap');
+  eq('and says which stretch', ask.span, 'the last year');
+  eq('the counts go', ask.pours, 5);
+  eq('and the tallies', ask.whiskies.length, 4);
+  /* Nothing about WHICH NIGHT, and nothing about who was there. A tally
+     is not a diary. */
+  const sent = JSON.stringify(ask);
+  eq('no dates leave the device', /20\d\d-\d\d-\d\d/.test(sent), false);
+  eq('and no log entries', /"kind":"pour"/.test(sent), false);
+  eq('nothing logged is nothing to write up',
+    L.recapAsk(L.recap([], cat, 'month', today)), null);
+
+  /* What comes back is checked. The failure worth guarding is not a wrong
+     fact — it is a paragraph that says nothing, or says it at length. */
+  eq('a real answer is kept',
+    L.recapText({ recap: 'A quiet month: five pours, and every one of the '
+      + 'Irish was drunk out somewhere rather than at home.' }).length > 40,
+    true);
+  eq('a one-word answer is not', L.recapText({ recap: 'Nice.' }), null);
+  eq('nothing at all is not', L.recapText({}), null);
+  eq('and neither is a number', L.recapText({ recap: 42 }), null);
+  eq('a very long one is cut',
+    L.recapText({ recap: 'x'.repeat(2000) }).length, 900);
+}
+
+/* §278  would I like this, and the matcher that nearly lied --------
+ *
+ * BZ: "there is a Would I like? idea for when out. Same as shopping, just
+ * different context." Exactly right — offerFacts reads a name and
+ * judgeListing measures it against the shelf. The only difference is the
+ * verb: in a shop the question is whether to BUY and the answer weighs a
+ * gap against forty pounds; at a bar it is whether to ORDER, and the worst
+ * outcome is a dram you did not love.
+ *
+ * Building it exposed a fault in L.nameOverlap, which by then was load
+ * bearing in FIVE places — the receipt import, the gift list, the buddy's
+ * shelf, the wishlist filter and this.
+ */
+sec('§278 would I like this');
+{
+  /* THE BUG. shopNorm strips "Year Old", and the word filter dropped
+     anything under three characters — so every age statement vanished and
+     "Redbreast 27" and "Redbreast 12" became the same word set. A bar list
+     said Redbreast 27 and the app said you own it. */
+  eq('an age statement tells two whiskies apart',
+    L.nameOverlap('Redbreast 27 Year Old', 'Redbreast 12 Year Old') < 0.8,
+    true);
+  eq('and the same whisky still matches itself',
+    L.nameOverlap('Redbreast 12 Year Old', 'Redbreast 12 Year Old'), 1);
+  /* A spelled-out age is the same age: a bar list says Ardbeg Ten. */
+  eq('ten is 10',
+    L.nameOverlap('Ardbeg Ten', 'Ardbeg 10 Years Old'), 1);
+  eq('and sixteen is 16',
+    L.nameOverlap('Lagavulin Sixteen', 'Lagavulin 16 Year Old'), 1);
+  /* ONE shared word is not a match when either name has more to say.
+     "Redbreast Px" reduces to a single token and scored 1.00 against
+     everything from the house. */
+  eq('a house on its own is not a match',
+    L.nameOverlap('Redbreast 27 Year Old', 'Redbreast Px') < 0.8, true);
+  /* And the case the matcher was written for still works: a retailer's
+     wording against a library's. */
+  eq('a retailer name still matches a fuller one',
+    L.nameOverlap('Barrell Bourbon Cigar Blend (750ml)',
+      'Barrell Craft Spirits Cigar Blend Bourbon Whiskey'), 1);
+  eq('and two unrelated whiskies do not',
+    L.nameOverlap('Ardbeg Ten', 'Woodford Reserve') < 0.3, true);
+
+  /* The judgement itself. */
+  const cat = { a: { k: 'a', name: 'Ardbeg 10 Years Old', dist: 'Ardbeg',
+                     proof: 92, sub: 'scotch' } };
+  const bs = [{ k: 'a', status: 'open' }];
+  eq('something on your own shelf says so',
+    L.wouldILike('Ardbeg Ten', cat, bs, []).verdict, 'you own this');
+  eq('and says why it matters at a bar',
+    /cannot pour later/.test(L.wouldILike('Ardbeg Ten', cat, bs, []).why),
+    true);
+  eq('something else gets a real verdict',
+    ['order it', 'worth trying', 'a gamble']
+      .indexOf(L.wouldILike('Yamazaki 18', cat, bs, []).verdict) >= 0, true);
+  eq('two letters is not a question',
+    L.wouldILike('xx', cat, bs, []), null);
+  eq('and nothing typed is not either',
+    L.wouldILike('', cat, bs, []), null);
+
+  /* THE BACK BAR. BZ: "at home we have the slots, not elsewhere." At home
+     the reels choose from a shelf the app knows; standing at a bar it
+     cannot choose, because it has no idea what is on the shelf behind the
+     bar. So you hand it the list.
+
+     Same engine as the shop, different question: not which of these is
+     worth buying but which should I order tonight. Novelty is a virtue in
+     a glass and a risk in a bottle. */
+  const cat2 = {
+    own: { k: 'own', name: 'Ardbeg 10 Years Old', dist: 'Ardbeg',
+           proof: 92, sub: 'scotch' },
+    also: { k: 'also', name: 'Lagavulin 16 Year Old', dist: 'Lagavulin',
+            proof: 86, sub: 'scotch' }
+  };
+  const bs2 = [{ k: 'own', status: 'open' }, { k: 'also', status: 'open' }];
+  const list = 'Lagavulin 16\nYamazaki 18\nArdbeg Ten\nNikka From The Barrel';
+  const picked = L.pickFromList(list, cat2, bs2, [], 4);
+
+  eq('it reads every name', picked.read, 4);
+  /* Anything you OWN drops out of the running whatever the shelf says
+     about it: you can pour that at home, and the one thing a bar has that
+     your house does not is everything you never bought. */
+  eq('what you own is set aside', picked.owned.length, 2);
+  eq('and the pick is not one of them', picked.pick.owned, false);
+  eq('it names one to order', !!picked.pick.name, true);
+  eq('and offers a few more', picked.rest.length >= 1, true);
+
+  /* A list of nothing but your own shelf has no answer, and says so
+     rather than picking one anyway. */
+  const allMine = L.pickFromList('Ardbeg Ten\nLagavulin 16', cat2, bs2, [], 4);
+  eq('a list you already own picks nothing', allMine.pick, null);
+  eq('but it still says what it saw', allMine.owned.length, 2);
+  eq('and no names at all is nothing',
+    L.pickFromList('...', cat2, bs2, [], 4), null);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
