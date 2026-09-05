@@ -9966,6 +9966,16 @@ sec('§268 one rule, three steps');
     { tn: u['x/tn'], tnSrc: u['x/tnSrc'], tnFrom: u['x/tnFrom'] });
   eq('so the count falls', L.libraryGaps(after).length, 0);
 
+  /* Bookkeeping never reaches the shared library. `source` says where an
+     answer came from and belongs in the ledger; it was being published
+     into an entry everybody reads. */
+  const pub = L.libraryFillWrite(
+    [{ k: 'p', name: 'P', missing: ['notes'],
+       got: { source: 'lookup', name: 'P', nose: 'peat', tnFrom: 'A FLIGHT' } }],
+    { p: 1 }, { p: { name: 'P' } }, 1).updates;
+  eq('where the answer came from is not published', pub['p/source'], undefined);
+  eq('but the note itself is', !!pub['p/tn'], true);
+
   /* A real note is still never overwritten — the rule protects what
      somebody wrote, not what a flight card prompted. */
   const real = { name: 'Y', proof: 100, dist: 'H', sub: 'scotch',
@@ -10032,6 +10042,79 @@ sec('§269 the library in three lists');
   eq('a second six months', L.restDays(2), 180);
   eq('a third a year', L.restDays(3), 365);
   eq('and a tenth is still a year, not for ever', L.restDays(10), 365);
+}
+
+/* §270  one loop, one writer ----------------------------------------
+ *
+ * BZ's design, after a night of me fixing symptoms inside a tangle:
+ * "score every entry, and if not 100 and it is more than six months since
+ * the last try, whitelist it, then run the whitelist" — and then, when
+ * none of what I built resembled it, "none of this sounds like my simple
+ * three bucket design."
+ *
+ * He was right. There were five places that could each decide a bottle
+ * needed no work, and they disagreed. The worst was the silent
+ * contribution path, which exists to add a stranger met while shopping and
+ * fired on the fill's own lookups too — a second writer with a different
+ * bar, arriving first and leaving the run with nothing to do.
+ *
+ * The run is the only writer during a fill. Everything asked about leaves
+ * the to-do list, written or parked. There is no third outcome, and that
+ * is what makes the number move.
+ */
+sec('§270 everything asked about leaves the list');
+{
+  const today = '2026-09-05';
+  const mk = n => {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      out.push({ k: 'e' + i, name: 'Entry ' + i, proof: 100, dist: 'H',
+                 sub: 'scotch' });
+    }
+    return out;
+  };
+  let lib = {}; mk(10).forEach(p => { lib[p.k] = p; });
+  let led = {};
+  const lists = () => L.libraryLists(Object.values(lib), led, today);
+
+  eq('all ten are to do', lists().todo.length, 10);
+  eq('none are waiting', lists().waiting.length, 0);
+
+  /* A run of five: three answered, two came back with nothing. */
+  const ask = lists().todo.slice(0, 5);
+  const found = [];
+  ask.forEach((x, i) => {
+    const got = i < 3 ? { name: x.name, nose: 'peat' } : { name: x.name };
+    if (L.gapsClosed(got, x.missing).length) {
+      found.push({ k: x.k, name: x.name, got: got, missing: x.missing });
+      led = L.recordLookup(led, x.k, 'found', today);
+    } else {
+      led = L.recordLookup(led, x.k, 'empty', today);
+    }
+  });
+  const picked = {}; found.forEach(f => { picked[f.k] = 1; });
+  const built = L.libraryFillWrite(found, picked, lib, 1);
+  Object.keys(built.updates).forEach(path => {
+    const bits = path.split('/');
+    if (bits[1] && bits[1] !== 'at') lib[bits[0]][bits[1]] = built.updates[path];
+  });
+
+  eq('three were written', built.names.length, 3);
+  /* The invariant. Five were asked about and five left the to-do list —
+     three because they are done and two because they are resting. A bottle
+     that stays on the list after being asked is what made the count sit at
+     119 all night. */
+  eq('five left the to-do list', lists().todo.length, 5);
+  eq('three are done', lists().done.length, 3);
+  eq('and two are waiting', lists().waiting.length, 2);
+  eq('the three lists still account for everything',
+    lists().todo.length + lists().done.length + lists().waiting.length, 10);
+
+  /* And the next run asks about DIFFERENT bottles, which is the other
+     half of what BZ saw: "the same first 10" every time. */
+  const next = lists().todo.slice(0, 5).map(x => x.k);
+  eq('the next run asks about different bottles',
+    next.some(k => ask.map(a => a.k).indexOf(k) >= 0), false);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
