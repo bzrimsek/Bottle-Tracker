@@ -9067,5 +9067,334 @@ sec('§255 evidence first, then biggest');
     inums.every((n, i) => i === 0 || n <= inums[i - 1]), true);
 }
 
+/* §256  a node searches the axis, not one gap -----------------------
+ *
+ * BZ reported this three times over two days: clicking a radar node often
+ * finds nothing, or offers one possible answer. Three symptoms were fixed
+ * and the cause was not — one gap became one phrase, and one phrase is one
+ * search, so an unlucky phrase made a whole axis look empty.
+ *
+ * Three asks now, pooled. An empty answer is a finding about the axis
+ * rather than an artefact of one query.
+ */
+sec('§256 several asks, one list');
+{
+  const r1 = { bottles: [{ name: 'Kavalan Solist', forGap: 'Taiwan' },
+                         { name: 'Shared Bottle', forGap: 'Taiwan' }] };
+  const r2 = { bottles: [{ name: 'Starward Nova', forGap: 'Australia' },
+                         { name: 'shared bottle', forGap: 'Australia' }] };
+  const r3 = { bottles: [{ name: 'Bimber Oloroso', forGap: 'England' }] };
+
+  const pooled = L.poolCandidates([r1, r2, r3]);
+  eq('the answers become one list', pooled.bottles.length, 4);
+  /* Deduped by NAME: neighbouring gaps surface the same bottle and
+     offering it twice makes a list look padded. */
+  eq('a bottle two asks both found appears once',
+    pooled.bottles.filter(b => /shared bottle/i.test(b.name)).length, 1);
+  eq('and it keeps the first ask that found it',
+    pooled.bottles.filter(b => /shared bottle/i.test(b.name))[0].forGap,
+    'Taiwan');
+  /* Order preserved: the first ask is the nearest gap. */
+  eq('the nearest gap leads', pooled.bottles[0].name, 'Kavalan Solist');
+  eq('every bottle says which gap it answers',
+    pooled.bottles.every(b => b.forGap), true);
+
+  /* One ask that failed does not empty the list. */
+  const partial = L.poolCandidates([null, r2, null]);
+  eq('a failed ask does not lose the others', partial.bottles.length, 2);
+
+  /* All three failing IS an empty answer, and must be distinguishable
+     from a search that returned no bottles. */
+  eq('every ask failing is nothing at all',
+    L.poolCandidates([null, null, null]), null);
+  eq('and no asks at all is nothing', L.poolCandidates([]), null);
+  eq('a search that ran and found nothing is not a failure',
+    L.poolCandidates([{ bottles: [] }]).bottles.length, 0);
+}
+
+/* §257  a ceiling on what a day of lookups costs ---------------------
+ *
+ * Every lookup runs against a real API key. Three hundred bottles is a few
+ * dollars and fine; a stranger importing a shelf is not, and a radar press
+ * now spends three lookups rather than one.
+ *
+ * Honest about what this is: a guard against ACCIDENT. The count lives on
+ * the device and anybody determined could clear it. It stops an import
+ * running away and a pocket press costing a fortune, which is the failure
+ * that will actually happen among friends. Real enforcement belongs where
+ * the key is.
+ */
+sec('§257 the day is capped');
+{
+  const today = '2026-09-04';
+  eq('a fresh day starts at nothing', L.lookupTally({}, today), 0);
+  eq('and yesterday does not carry over',
+    L.lookupTally({ date: '2026-09-03', n: 500 }, today), 0);
+  eq('so tomorrow is allowed again',
+    L.lookupAllowed({ date: '2026-09-03', n: 500 }, today), true);
+
+  eq('under the cap is allowed',
+    L.lookupAllowed({ date: today, n: 5 }, today), true);
+  eq('at the cap is not',
+    L.lookupAllowed({ date: today, n: L.LOOKUP_CAP }, today), false);
+  eq('and over it certainly is not',
+    L.lookupAllowed({ date: today, n: L.LOOKUP_CAP + 40 }, today), false);
+
+  /* Counting: one for an ordinary lookup, three for a pooled radar press,
+     so the hungriest caller is not the one that escapes the ceiling. */
+  const one = L.countLookup({}, today);
+  eq('one lookup counts one', one.n, 1);
+  eq('and stamps the day', one.date, today);
+  eq('a pooled press counts all of its asks',
+    L.countLookup(one, today, 3).n, 4);
+  eq('and a new day resets the count rather than adding to it',
+    L.countLookup({ date: '2026-09-03', n: 90 }, today, 2).n, 2);
+}
+
+/* §258  is this a good price, for THIS shelf ------------------------
+ *
+ * BZ: "we would eval on shelf and on cost." Two verdicts, never one —
+ * blending them destroys the only thing worth knowing, because a bottle
+ * that suits the shelf at a poor price and one that suits nothing at a
+ * bargain both come out middling and call for opposite actions.
+ */
+sec('§258 the price, judged against your own shelf');
+{
+  /* Reading the number out of a listing. A struck-through price beside a
+     lower one is a sale: the LOWER is what somebody pays. */
+  eq('a sale price is the lower one',
+    L.offerPrice('~~$199.99~~ $164.99').amount, 164.99);
+  eq('and the currency comes with it',
+    L.offerPrice('\u00a344.95').currency, 'GBP');
+  eq('a shipping threshold is not a bottle price',
+    L.offerPrice('Free shipping over $99'), null);
+  eq('but a bottle beside one still reads',
+    L.offerPrice('Kavalan $249.99\nFree shipping over $99').amount, 249.99);
+  eq('a saving is not a price',
+    L.offerPrice('You Save $35\n$164.99').amount, 164.99);
+  eq('nothing priced is nothing', L.offerPrice('no numbers here'), null);
+
+  /* What YOU paid beats what anybody lists it at. Worked out by hand:
+     paid 100, offered 85, which is 15% under. */
+  const paidGood = L.priceVerdict({ amount: 85, currency: 'USD' },
+    { paid: 100 });
+  eq('under what you paid is a good price', paidGood.verdict, 'good price');
+  eq('and it says by how much', /15% under/.test(paidGood.why), true);
+  eq('well over it is not',
+    L.priceVerdict({ amount: 120, currency: 'USD' }, { paid: 100 }).verdict,
+    'over what you paid');
+  eq('and a few percent either way is about what you paid',
+    L.priceVerdict({ amount: 103, currency: 'USD' }, { paid: 100 }).verdict,
+    'about what you paid');
+
+  /* Then list price, and it says which comparison it used — "under the
+     £52 you paid" and "about what bottles like it cost" are different
+     claims and must not read alike. */
+  const byList = L.priceVerdict({ amount: 50, currency: 'USD' },
+    { msrp: 60 });
+  eq('list price is the second reference', byList.verdict, 'good price');
+  eq('and it names it', /list price/.test(byList.why), true);
+  eq('paid wins over list when both are known',
+    /you paid/.test(L.priceVerdict({ amount: 85, currency: 'USD' },
+      { paid: 100, msrp: 60 }).why), true);
+
+  /* Currency is never converted silently. */
+  const noRate = L.priceVerdict({ amount: 44.95, currency: 'GBP' },
+    { msrp: 60 });
+  eq('a foreign price with no rate is not compared',
+    noRate.verdict, 'not compared');
+  eq('and it says why', /Set a rate/.test(noRate.why), true);
+  const withRate = L.priceVerdict({ amount: 44.95, currency: 'GBP' },
+    { msrp: 60, rate: { n: 1.27, at: '2026-09-04' } });
+  eq('with a rate it compares', withRate.verdict !== 'not compared', true);
+  /* And SHOWS ITS WORKING: a converted number that does not say it was
+     converted is one somebody quotes back as though the app knew it. */
+  eq('and shows the rate it used', /rate of 1.27/.test(withRate.why), true);
+  eq('and when the rate was set',
+    /set 2026-09-04/.test(withRate.why), true);
+
+  /* The pair is the recommendation. */
+  const good = { verdict: 'good price' }, over = { verdict: 'over the odds' };
+  eq('fits and cheap is buy it',
+    L.offerAdvice('for you', good, false), 'Buy it.');
+  eq('fits and dear waits',
+    /comes round again/.test(L.offerAdvice('for you', over, false)), true);
+  eq('wrong for you and cheap is still no',
+    /Cheap is not a reason/.test(L.offerAdvice('unknown', good, false)),
+    true);
+
+  /* Allocation is urgency, not fit and not price. */
+  eq('allocated and wanted is buy now',
+    /will not wait/.test(L.offerAdvice('for you', good, true)), true);
+  eq('allocated and dear is a real decision',
+    /real one/.test(L.offerAdvice('for you', over, true)), true);
+  /* The line that matters most: scarcity is the easiest pressure to
+     exploit, and a shelf that does not want a bottle does not want it
+     because it is rare. */
+  eq('allocated and wrong for you is still not a reason',
+    /Rare is not a reason/.test(L.offerAdvice('unknown', good, true)), true);
+
+  /* A lookup's guess is the WEAKEST reference and says so, because a
+     wrong number inside a price comparison is worse than no comparison.
+     It ranks below both of the others. */
+  const soft = L.priceVerdict({ amount: 50, currency: 'USD' },
+    { typical: 70 });
+  eq('a typical price can still call a bargain', soft.verdict, 'good price');
+  eq('and admits it is a guess', /a guess/.test(soft.why), true);
+  eq('and is marked soft', soft.soft, true);
+  eq('list price outranks a guess',
+    /list price/.test(L.priceVerdict({ amount: 50, currency: 'USD' },
+      { msrp: 60, typical: 70 }).why), true);
+  eq('and what you paid outranks both',
+    /you paid/.test(L.priceVerdict({ amount: 50, currency: 'USD' },
+      { paid: 55, msrp: 60, typical: 70 }).why), true);
+
+  eq('no price is no verdict', L.priceVerdict(null, {}), null);
+}
+
+/* §259  receipts fill in what bottles cost --------------------------
+ *
+ * `paid` is the strongest price reference the app has — it beats a list
+ * price and beats anything a lookup could guess — and 3 of BZ's 344
+ * bottles carried one, because until now it arrived only through a CSV
+ * import that ADDS bottles. He had a spreadsheet of 39 orders the whole
+ * time and no way to get it in.
+ */
+sec('§259 matching receipts to the shelf');
+{
+  /* A spreadsheet paste is tab-separated; the CSV parser is comma-only. */
+  const tsv = 'Order Date\tBottle / Product Description\tBottle Price\n'
+    + '2026-08-28\tOld Elk Cognac Cask\t75.99';
+  const rows = L.parseDelimited(tsv);
+  eq('a tab paste is read as rows', rows.length >= 2, true);
+  eq('and the columns are found by name',
+    L.receiptColumns(rows[0]).price, 2);
+  eq('a comma file still works',
+    L.parseDelimited('a,b\n1,2').length >= 2, true);
+  eq('a sheet with no price column is refused',
+    L.receiptColumns(['Order Date', 'Notes']), null);
+  /* A bottle name with a comma survives the trip through the parser. */
+  const commas = L.parseDelimited('Bottle\tPrice\nSmith, Bowman\t50');
+  eq('a comma inside a cell is not a new column',
+    commas[1][0], 'Smith, Bowman');
+
+  /* Matching is by word overlap, because a retailer writes "Barrell
+     Bourbon Cigar Blend (750ml)" where the library says "Barrell Craft
+     Spirits Cigar Blend Bourbon Whiskey". Exact search found 13 of BZ's
+     39 purchases; overlap finds 26 strongly and 11 more worth a look. */
+  eq('a retailer name matches a fuller library name',
+    L.nameOverlap('Barrell Bourbon Cigar Blend (750ml)',
+      'Barrell Craft Spirits Cigar Blend Bourbon Whiskey') >= 0.8, true);
+  eq('and an unrelated bottle does not',
+    L.nameOverlap('Ardbeg Ten', 'Woodford Reserve Bourbon') < 0.3, true);
+
+  const cat = {
+    a: { k: 'a', name: 'Barrell Craft Spirits Cigar Blend Bourbon Whiskey' },
+    b: { k: 'b', name: 'Ardbeg Ten Years Old' }
+  };
+  const bs = [{ id: 1, k: 'a', status: 'open' },
+              { id: 2, k: 'b', status: 'open', paid: 60 }];
+  const rowsIn = [
+    { name: 'Barrell Bourbon Cigar Blend (750ml)', price: 84.99,
+      date: '2026-03-11' },
+    { name: 'Ardbeg Ten', price: 55, date: '2026-01-01' },
+    { name: 'Something Nobody Owns', price: 40, date: '2026-01-01' }
+  ];
+  const ms = L.matchReceipts(rowsIn, cat, bs);
+  eq('a strong match is marked strong', ms[0].confidence, 'strong');
+  eq('a bottle already priced says so', ms[1].already, true);
+  eq('and an unmatched line matches nothing', ms[2].match, null);
+
+  /* Nothing is written without a tick, and a receipt NEVER adds a bottle:
+     it is evidence about one already owned, and importing it as new is
+     how a shelf doubles. */
+  const ups = L.receiptUpdates(ms, { 0: 1, 1: 1, 2: 1 }, bs);
+  eq('only the unpriced bottle is updated', ups.length, 1);
+  eq('with the price from the receipt', ups[0].paid, 84.99);
+  eq('and the date it was bought', ups[0].got, '2026-03-11');
+  eq('nothing ticked writes nothing',
+    L.receiptUpdates(ms, {}, bs).length, 0);
+  eq('a line with no price is skipped',
+    L.receiptUpdates(L.matchReceipts(
+      [{ name: 'Barrell Bourbon Cigar Blend', price: 0 }], cat, bs),
+      { 0: 1 }, bs).length, 0);
+}
+
+/* §260  a tasting travels to the people who were there ---------------
+ *
+ * BZ: "if we are doing a flight with buddies, can we share the tastes with
+ * them after we are complete and have it seed their wish list, if they so
+ * choose and if they don't have the bottle?" And the job it replaces: it
+ * "saves taking a photo of the bottle" — somebody likes the fourth pour,
+ * photographs the label, and the photo sits in a camera roll with nothing
+ * attached to it.
+ *
+ * The host does NOT write to the guest. Every uid-keyed node is writable
+ * only by its owner, and that rule is worth more than the convenience. So
+ * the host records the evening under their own uid naming who was there,
+ * and each guest's device applies it with their own credentials. Consent
+ * is attendance, and forwarding is impossible because a device not on the
+ * list has nothing to read.
+ */
+sec('§260 sharing what was poured');
+{
+  const cat = {
+    a: { k: 'a', name: 'Ardbeg Corryvreckan', dist: 'Ardbeg', proof: 114,
+         fin: 'Sherry', sub: 'scotch',
+         tn: { nose: 'tar and pepper' }, tnSrc: 'you' },
+    b: { k: 'b', name: 'Springbank 15', dist: 'Springbank', proof: 92,
+         sub: 'scotch' },
+    c: { k: 'c', name: 'Nothing Poured', dist: 'X', proof: 90 }
+  };
+  const rec = L.tastingRecord({ title: 'PEAT NIGHT' }, ['a', 'b', 'a'],
+    cat, ['guest1', 'guest2'], 'BZ', '2026-09-04');
+
+  eq('the evening is recorded', !!rec, true);
+  eq('and names who was there', rec.who.length, 2);
+  eq('a pour listed twice appears once', rec.pours.length, 2);
+  eq('the bottle facts travel', rec.pours[0].proof, 114);
+  eq('and the cask', rec.pours[0].fin, 'Sherry');
+  /* The note travels WITH ITS AUTHOR. A note nobody wrote silently
+     becoming somebody's own is how a shelf fills with opinions no one
+     holds. */
+  eq('the note travels', !!rec.pours[0].tn, true);
+  eq('and keeps whose it is', rec.pours[0].tnBy, 'BZ');
+  eq('and where it came from', rec.pours[0].tnSrc, 'you');
+  eq('a bottle nobody poured is not in it',
+    rec.pours.some(p => p.k === 'c'), false);
+  eq('an evening with nobody there is not a tasting',
+    L.tastingRecord({ title: 'X' }, ['a'], cat, [], 'BZ', '2026-09-04'),
+    null);
+
+  /* The guest side. Owned means logged — they drank it. Not owned means
+     offered, because a wishlist is somebody's own list. */
+  const theirs = { a: { k: 'a', name: 'Ardbeg Corryvreckan' } };
+  const theirBottles = [{ k: 'a', status: 'open' }];
+  const g = L.tastingForGuest(rec, theirs, theirBottles);
+  eq('a bottle they own is logged as a pour', g.pours.length, 1);
+  eq('and it is the right one', g.pours[0].k, 'a');
+  eq('a bottle they do not own is offered', g.offers.length, 1);
+  eq('and it is the other one', g.offers[0].name, 'Springbank 15');
+  /* The wish entry says where it came from, because a wishlist of bare
+     names is what L.wishEntry was written to avoid. */
+  eq('the offer carries where it was poured',
+    /Poured at BZ/.test(g.where), true);
+  eq('and when', /2026-09-04/.test(g.where), true);
+
+  /* Matched by name as well as by key, because two shelves need not share
+     a catalogue key for the same whisky. */
+  const byName = L.tastingForGuest(rec,
+    { zz: { k: 'zz', name: 'ardbeg corryvreckan' } },
+    [{ k: 'zz', status: 'open' }]);
+  eq('the same whisky under another key still counts as owned',
+    byName.pours.length, 1);
+
+  /* A guest who owns nothing from the night is offered everything. */
+  const none = L.tastingForGuest(rec, {}, []);
+  eq('owning none of it offers all of it', none.offers.length, 2);
+  eq('and logs nothing', none.pours.length, 0);
+  eq('an empty record is nothing', L.tastingForGuest(null, {}, []), null);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

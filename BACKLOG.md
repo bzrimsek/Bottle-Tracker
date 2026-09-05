@@ -121,6 +121,9 @@ after it, which is comfort rather than protection.
 
 Built, measured or abandoned. Kept as a list rather than as pages, because the reasoning lives in CHANGELOG.md against the version that shipped it.
 
+- Flights and the shape chart do not know about each other (v1.6.61)
+- The map is disconnected from Origin (v1.6.61)
+- An axis at 100% still has something to buy (v1.6.63)
 - Score the shelf, and hand back a roadmap
 - Fill the library's gaps in bulk
 - Record what was actually poured, not what was designed
@@ -145,18 +148,56 @@ Built, measured or abandoned. Kept as a list rather than as pages, because the r
 - 13. Paste a shop URL for a verdict
 - 17. The shelf redraws whole, and counts by scanning
 
-### An admin with an empty queue cannot tell they are an admin
-Same session. The library screen shows "Offered to the library — Nothing
-waiting" and, when nothing on the shelf differs from the library, no admin
-buttons at all. BZ read that as lost permissions and went to the Firebase
-console to check; his uid was correctly under `bz-apps/whisky/admins` the
-whole time. An empty queue and a missing feature look identical.
+### An axis at 100% still has something to buy — DONE 2026-09-04
+Built. Every node opens the list, whatever the score, and the toast is
+gone. A node searches the AXIS rather than one gap: the three nearest
+things it wants, asked together and pooled into one deduped list, each
+bottle labelled with the gap it answers. A full axis asks for more of its
+thinnest rung, because every rung held means nothing MISSING rather than
+nothing to buy.
 
-The fix is a line, not a feature: say on the library screen that you are an
-admin and what would appear here when there is work. v1.6.21 made the
-failing case say why in Diagnostics; the succeeding-but-idle case still
-says nothing.
+Recorded because it took too long: BZ reported this three times over two
+days and each time a symptom was fixed rather than the cause — a phrase
+left over from when the axis meant Scotch regions, a hard list that
+emptied the roadmap, a rotation so a second press asked something else.
+The cause was that one gap became one phrase and one phrase is one search,
+so an unlucky phrase made a whole axis look empty. Fixing symptoms three
+times is what a backlog entry looks like when it should have been a build.
 
+The cost is what was predicted: three lookups per press instead of one.
+`deadGaps` still stops a phrase that came back empty being paid for twice,
+and the spend cap below is now worth more than it was.
+
+Original entry follows.
+
+
+### An admin with an empty queue cannot tell they are an admin — DONE 2026-09-04
+Both idle admin cards now say what they ARE as well as what they are not:
+"Nothing waiting. You are an admin, so when somebody offers a bottle or a
+barcode it appears here" — an empty list means nobody has offered
+anything, not that the keys are gone.
+
+Original entry follows.
+
+
+### Share what a flight tasted, and let it seed a wishlist — DONE 2026-09-04
+Built to the decisions above. The host records the evening under their OWN
+uid naming who was there, and each guest's device reads it on next load and
+applies it with their own credentials — so no account ever writes into
+another, consent is attendance, and forwarding is impossible because a
+device not on the list has nothing to read.
+
+Owned bottles are logged as pours without asking. Everything else is
+offered to the wishlist with the proof, the cask, where it was poured and
+the note, which keeps its author's name.
+
+`firebase-rules.json` gained a `tastings` node: owner-written,
+readable by anybody the host shares a shelf with. REQUIRES A CONSOLE PASTE.
+
+Untested with a second account, which is true of every sharing path in the
+app.
+
+Original entry follows.
 
 ### Share what a flight tasted, and let it seed a wishlist
 BZ, same conversation: "if we are doing a flight with buddies, can we share
@@ -235,127 +276,23 @@ Both of these want the same thing first: the run has to know who was there,
 which it currently does not.
 
 
-### Is this offer actually a good price
-BZ, same conversation: "when looking at an offer a deal check based on
-offer price would also be cool."
 
-`L.offerNames` strips prices out and throws them away, and `L.offerFacts`
-never looks for one. The shelf can answer the question and does not get
-asked: `msrp` is on every catalogue product, `L.paidFor` knows what was
-actually paid for each bottle and averages it, and `L.priceBand` already
-sorts bottles into everyday, good, special and vault.
+### Is this offer actually a good price — DONE 2026-09-04
+Built as specified: two verdicts, never blended; allocation as urgency
+rather than a third axis; a manual rate that shows its working. Prices are
+kept when parsing rather than discarded, a struck-through sale price reads
+as the lower figure, and a shipping threshold is not mistaken for a bottle.
 
-**Two verdicts, never one.** BZ, 2026-09-04: "we would eval on shelf and
-on cost." Fit and price are independent questions and blending them into a
-single score destroys the only thing worth knowing — a bottle that suits
-the shelf at a poor price and a bottle that suits nothing at a bargain both
-come out middling, and they call for opposite actions.
+Three references in order — what YOU paid, then list price, then a price
+the listing stated, which is labelled a guess and never outranks the other
+two.
 
-So two readings side by side, and the pair IS the recommendation:
+Two things found while building it. `L.paidFor` returns `{ avg, n }` and
+the verdict was being handed the object, so the strongest comparison never
+fired. And `paid` had no way into the app but a CSV import, which is why 3
+of 344 bottles carried one — see the receipts entry below.
 
-    fits the shelf + good price   buy it
-    fits the shelf + poor price   want it, wait — it comes round again
-    wrong for you  + good price   cheap is not a reason
-    wrong for you  + poor price   no
-
-The existing verdicts (for you / worth a look / unknown) are the fit axis
-and stay as they are. Price is a second, separate line. Where price cannot
-be judged — no figure in the paste, or a currency with no rate set — the
-fit verdict still stands alone rather than being dragged toward the middle
-by a missing number, which is what a blended score would do.
-
-**And scarcity, which is a third thing and not a third axis.** BZ,
-2026-09-04: "need to include a notion of that's allocated, buy it!"
-
-Allocation does not change whether a bottle is for you or whether the price
-is fair. It changes how long the question stays open. An allocated bottle
-at its normal price is a BUY NOW, because the alternative is not buying it
-cheaper next month, it is not seeing it again. The same bottle at a poor
-price is a real decision rather than an easy no — which is exactly the case
-a blended score would have flattened.
-
-The data is already there and nothing new needs collecting: `alloc` carries
-common, uncommon, rare and unicorn, and `scar` carries standard, batched,
-limited and exclusive. On BZ's shelf that is 58 rare, 8 unicorn, 46 limited
-and 8 exclusive — enough that the words mean something.
-
-    fits + fair price + allocated      buy it now, it will not wait
-    fits + fair price                  buy it
-    fits + poor price + allocated      your call, and it is a real one
-    fits + poor price                  want it, wait
-    wrong for you + allocated          still not a reason
-
-That last line matters most and is the one an app is tempted to get wrong.
-Scarcity is the strongest pressure in whisky buying and the easiest to
-exploit; a shelf that does not want a bottle does not want it because it is
-rare. The app should say so plainly rather than joining in.
-
-Honest about where it knows this from: the library, not the market. A
-bottle nobody has published as allocated will not be flagged, and the app
-should not infer scarcity from a price.
-
-**Where each signal belongs.** BZ, 2026-09-04: "the allocated idea is more
-in store, and price is in store and in email and in web page."
-
-That is the right cut, and it says something about the whole Shop tab
-rather than just this feature. All four situations are asking the same
-question — is this bottle for me — and each has been answering it in its
-own words. They should share one verdict vocabulary and weight it by where
-the person is standing:
-
-- **In a store, holding it.** Allocation matters most here and nowhere
-  else: you cannot come back, so scarcity is the difference between
-  deciding now and deciding never. Price matters too, and it is the one
-  place the answer has to be readable in the four seconds before somebody
-  behind you wants the aisle.
-- **An email or a drop list.** Price on every line, because a drop list is
-  mostly a price list. Allocation is usually why the email exists at all,
-  so flagging it says little that the sender has not already said louder.
-- **A web page.** Price, and here it is worth the most: a listing carries
-  one, the person has time to weigh it, and this is the surface where a
-  comparison against what they actually paid is most likely to change a
-  decision.
-- **Deciding what to buy next.** Neither. There is no bottle and no price
-  yet, which is why this screen is the recommender rather than a verdict.
-
-So: price on three of the four, allocation on one, fit on all of them. And
-the in-store answer is the one to design for brevity — the others are read
-sitting down.
-
-What to build:
-- Keep the price when parsing rather than discarding it, on both paths — a
-  drop list has one per line, a shop listing has one in the prose.
-- Judge it against what is knowable, in this order: what YOU paid for the
-  same bottle, then the library's `msrp`, then the band its peers sit in. A
-  verdict with a number behind it, in the shape everything else on that
-  screen uses.
-- Say which comparison was used. "Under the £52 you paid last time" and
-  "about what bottles like it cost" are different claims and should not
-  read the same.
-- Currency. The listing that started this was in pounds and the shelf is in
-  dollars, and USD/GBP is the pairing that will actually come up. BZ,
-  2026-09-04: a setting with a manual periodic lookup is fine. So: one rate,
-  typed in Settings, with the date it was set, and no network call — a
-  conversion the person entered is one they know the age of, which is
-  exactly what a silently-fetched rate is not.
-
-  What that buys, and what it obliges. It obliges the app to SHOW its
-  working: "£44.95 is about $57 at your rate of 1.27, set 4 September"
-  rather than "$57". A converted number that does not say it was converted
-  is a number somebody will quote back later as though the app knew it.
-  And a rate months old should say so rather than quietly still applying —
-  the same shape as the lookup ledger's ninety days, and for the same
-  reason.
-
-  Unset is not an error: say the price in the currency it came in, compare
-  nothing, and offer the setting. A comparison is worth having only when
-  both sides are real.
-
-What this must not become: a market-price feature. Only Drams does
-location-based pricing and users report it wrong often enough to inflate
-their collection value. The honest version answers a narrower question —
-is this a good price FOR YOU, given what you have paid — and says nothing
-when it cannot.
+Original entry follows.
 
 
 ### Nothing reads the tasting notes
@@ -384,19 +321,6 @@ What it needs:
   currently written.
 
 
-### Flights and the shape chart do not know about each other
-A thin axis has a consequence that is not being surfaced: it means certain
-designed comparisons cannot be poured. "Origin is at 67%, which is why
-these three flights are unrunnable" turns a percentage into a reason, and
-`L.flightReady` already computes exactly what is missing.
-
-The reverse is worth more. A bottle that completes a designed flight beats
-one that fills an abstract axis, because the flight is a comparison
-somebody already decided they wanted. `gapsFromFlights` exists and was
-deliberately demoted when affinity took the lead; now that the recommender
-argues from taste, "and it completes ONE STILL FOUR RECIPES" is a second
-reason to hang on an affinity finding rather than a competing source.
-
 
 ### Two shelves, side by side
 The sharing feature that has not been built. `L.shelfAxes` run twice
@@ -408,12 +332,6 @@ It also gives the flights somewhere to go: a flight neither of you can run
 alone but both of you can run together is the strongest argument for
 sharing a shelf that this app could make.
 
-
-### The map is disconnected from Origin
-The Origin axis counts Scotch regions only. The map knows countries, and
-`L.countryCounts` already computes them. World coverage is an axis the data
-supports and nothing scores, and the map is currently a picture rather than
-a measure — tapping a country says what is there, and never what is not.
 
 
 ### Editable reference data — DEFERRED, and BZ is right to be wary
@@ -478,6 +396,7 @@ immediately queue.
 ## Closed
 
 
+
 ### 5b. Gifts — the wishlist pointed outward
 Requested 2026-08-31. Two features that share one hard requirement.
 
@@ -529,11 +448,31 @@ feature pointless — a gift finder that spoils gifts is worse than none.
 
 
 
+
+### Import what you paid — DONE 2026-09-04
+The manual half of receipt ingest, and much the cheaper half. BZ had a
+spreadsheet of 39 orders with dates, prices and retailers, and no way to
+get it in: `paid` arrived only through a CSV import that ADDS bottles, so
+using it would have doubled his shelf.
+
+Paste the sheet; it matches each line to a bottle already owned and fills
+in the price and the date. It never adds a bottle — a receipt is evidence
+about something you own. Matching is word overlap rather than exact name,
+because a retailer writes "Barrell Bourbon Cigar Blend (750ml)" where the
+library says "Barrell Craft Spirits Cigar Blend Bourbon Whiskey": exact
+search matched 13 of his 39, overlap matches 27 strongly and 10 more worth
+a look. Strong matches are ticked, probable ones are not, and nothing is
+written until the list has been read.
+
+On his own data it took the shelf from 3 priced bottles to 21.
+
+
 ### 7. Receipt ingest by email
 Forward a receipt to a dedicated Gmail account; Apps Script polls every
 fifteen minutes, parses it, and drops the acquisition into a pending queue
 for confirmation. No domain needed. Parsers are per retailer, so it grows
 one shop at a time. Same script project as item 2.
+
 
 
 ### 8. Road trip planner
@@ -544,6 +483,7 @@ The open question is routing. Straight-line ordering with distances costs
 nothing and works offline but is not roads; real driving directions need an
 API, a key and a proxy, and no free router handles the Islay ferry well.
 Nearest-neighbour ordering is fine for six stops.
+
 
 
 ### 10. Tasting night
@@ -578,10 +518,20 @@ Wants shared shelves exercised with a real second person first. That has
 never been done.
 
 
-### 11. A cap on what a lookup run can spend
-Fill in your shelf calls the API once per bottle on BZ's key. Three hundred
-bottles is a few dollars and fine; a stranger importing a shelf is not.
-Needs a per-user ceiling before anybody outside the three uses it.
+
+### 11. A cap on what a lookup run can spend — DONE 2026-09-04
+120 lookups a day, counted on the device, enforced at all three callers —
+askLookup, the pooled radar search which spends three a press, and the
+flight designer. Two of those reached the service directly and would have
+made the cap decorative.
+
+Honest about what it is: a guard against ACCIDENT rather than abuse. The
+count is local and anybody determined could clear it; it stops an import
+running away and a pocket press costing a fortune, which is the failure
+that will actually happen among friends. Real enforcement belongs in the
+Apps Script, where the key is.
+
+Original entry follows.
 
 
 ### 12. Pooled flights cannot be fully blind
@@ -603,6 +553,7 @@ flight uses, so it is a small change if it is ever wanted.
 **Not building it yet.** BZ was unsure the pooled flight would get used at
 all. If it is not reached for in three months that is an answer, and it cost
 an hour.
+
 
 
 ### 15. Where a hard bottle can actually be got
@@ -644,6 +595,7 @@ an empty document and it can only ever be a link. If a second button is
 ever wanted, that is the one, and it is still just a link.
 
 
+
 ### 16. Firebase write ceilings
 Raised again 2026-09-03. Every shared node has a rule bounding what may be
 written to it except `upc`, the barcode pairings, which anybody signed in
@@ -658,6 +610,7 @@ timestamp, and nothing else accepted.
 
 Worth doing before the app is shared with anybody outside the current
 circle, and not urgent while it is not.
+
 
 
 ### Also worth naming, from the week of 2026-09-03
