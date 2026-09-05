@@ -10126,5 +10126,63 @@ sec('§270 everything asked about leaves the list');
     next.some(k => ask.map(a => a.k).indexOf(k) >= 0), false);
 }
 
+/* §271  the key belongs to the map, not the row ---------------------
+ *
+ * A library entry is stored under L.libKey(name) and does not carry a `k`
+ * field of its own. The rewritten fill built its snapshot as snap[p.k], so
+ * all 422 of BZ's entries collapsed into one bucket under `undefined` and
+ * the run offered to look up two. The count had the same fault in reverse:
+ * a ledger lookup on `undefined` always says never-asked, so nothing ever
+ * counted as resting.
+ *
+ * Anything that needs a key has to put it on the row first.
+ */
+sec('§271 rows carry the key the map holds them under');
+{
+  const today = '2026-09-05';
+  /* A library shaped like the real one: keyed by name, no k on the rows. */
+  const byKey = {
+    'ardbeg_ten': { name: 'Ardbeg Ten', proof: 92, dist: 'Ardbeg',
+                    sub: 'scotch', tn: { nose: 'peat' } },
+    'blue_spot': { name: 'Blue Spot', proof: 117, dist: 'Spot',
+                   sub: 'irish' },
+    'longrow_18': { name: 'Longrow 18', proof: 92, dist: 'Springbank',
+                    sub: 'scotch' }
+  };
+  const rows = Object.keys(byKey)
+    .map(k => Object.assign({}, byKey[k], { k: k }));
+
+  const lists = L.libraryLists(rows, {}, today);
+  eq('every entry is accounted for',
+    lists.done.length + lists.todo.length + lists.waiting.length, 3);
+  eq('and each row knows its key',
+    lists.todo.every(r => r.k && byKey[r.k]), true);
+
+  /* Without the key the buckets collapse — which is exactly what happened
+     and what nothing caught. */
+  const keyless = Object.keys(byKey).map(k => byKey[k]);
+  const bad = L.libraryLists(keyless, {}, today);
+  eq('a keyless row cannot be found in the map',
+    bad.todo.every(r => r.k && byKey[r.k]), false);
+
+  /* The ledger is keyed the same way, so resting works. */
+  const led = { longrow_18: { no: 1, at: today } };
+  const rested = L.libraryLists(rows, led, today);
+  eq('a rested entry leaves the to-do list', rested.todo.length, 1);
+  eq('and appears as waiting', rested.waiting.length, 1);
+  eq('under the key the map holds it under', rested.waiting[0].k,
+    'longrow_18');
+
+  /* And a write addresses the same key, so it lands on the entry the gap
+     was found on rather than creating a new node beside it. */
+  const built = L.libraryFillWrite(
+    [{ k: 'longrow_18', name: 'Longrow 18', missing: ['notes'],
+       got: { name: 'Longrow 18', nose: 'brine' } }],
+    { longrow_18: true }, byKey, 1);
+  eq('the write is addressed to the map key',
+    Object.keys(built.updates).some(p2 => p2.indexOf('longrow_18/') === 0),
+    true);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
