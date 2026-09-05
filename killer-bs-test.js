@@ -7751,8 +7751,17 @@ sec('§235 what is worth looking up twice');
     { k: 'p4', name: 'Known Miss', proof: null, dist: 'H', sub: 'bourbon' }
   ];
   const ledger = { p4: { ok: 0, no: 2, at: today } };
-  const plan = L.planLibraryFill(products, ledger, today);
-  eq('a complete entry is not in the plan at all', plan.thin, 3);
+  /* planLibraryFill was a wrapper that returned ask/skip; libraryLists
+     returns the three buckets BZ asked for and the run uses that. Same
+     behaviour, expressed once. */
+  const ll = L.libraryLists(products, ledger, today);
+  const plan = { ask: ll.todo, skip: ll.waiting, thin: ll.todo.length };
+  /* `thin` counted everything short of something, due or not, which is
+     the number that sat at 119 all night. The three buckets replace it:
+     to do is what is DUE, and the rested ones are counted separately. */
+  eq('a complete entry is in none of the buckets',
+    ll.todo.length + ll.waiting.length, 3);
+  eq('and the complete one is done', ll.done.length, 1);
   eq('a known miss is skipped, not asked', plan.ask.length, 2);
   eq('and it is counted as skipped', plan.skip.length, 1);
   eq('the skipped one is named', plan.skip[0].k, 'p4');
@@ -7761,9 +7770,9 @@ sec('§235 what is worth looking up twice');
   eq('the emptiest entries lead',
     plan.ask[0].missing.length >= plan.ask[1].missing.length, true);
   eq('an empty library plans nothing',
-    L.planLibraryFill([], {}, today).ask.length, 0);
+    L.libraryLists([], {}, today).todo.length, 0);
   eq('a missing library is not an error',
-    L.planLibraryFill(null, null, today).thin, 0);
+    L.libraryLists(null, null, today).todo.length, 0);
 }
 
 /* §236  case is tidied only where none was given ----------------------
@@ -9784,19 +9793,19 @@ sec('§265 what is left to do, not what is imperfect');
   const products = [full, thin1, thin2];
 
   /* Nothing asked yet: both gaps are work. */
-  const fresh = L.planLibraryFill(products, {}, today);
-  eq('a complete bottle is not work', fresh.ask.length, 2);
-  eq('and nothing is being skipped yet', fresh.skip.length, 0);
+  const fresh = L.libraryLists(products, {}, today);
+  eq('a complete bottle is not work', fresh.todo.length, 2);
+  eq('and nothing is being skipped yet', fresh.waiting.length, 0);
 
   /* Asked twice and nothing came back: no longer work outstanding, and it
      must stop inflating the number for ever. */
   const ledger = { b: { no: L.LOOKUP_MISS_LIMIT, at: today } };
-  const after = L.planLibraryFill(products, ledger, today);
+  const after = L.libraryLists(products, ledger, today);
   eq('a bottle already asked about drops out of the work',
-    after.ask.length, 1);
+    after.todo.length, 1);
   eq('but it is still counted as short of something',
-    after.skip.length, 1);
-  eq('and it is the right one', after.skip[0].k, 'b');
+    after.waiting.length, 1);
+  eq('and it is the right one', after.waiting[0].k, 'b');
 
   /* A good chunk of time before asking again. BZ: "we should allow for a
      time period to check again, but a good chunk of time." Ninety days
@@ -9805,20 +9814,20 @@ sec('§265 what is left to do, not what is imperfect');
   eq('half a year before trying again', L.TRY_AGAIN_AFTER, 180);
   const stale = { b: { no: L.LOOKUP_MISS_LIMIT, at: '2026-01-01' } };
   eq('and after that it is asked once more',
-    L.planLibraryFill(products, stale, '2026-09-04').ask.length, 2);
+    L.libraryLists(products, stale, '2026-09-04').todo.length, 2);
   const recent = { b: { no: L.LOOKUP_MISS_LIMIT, at: '2026-08-01' } };
   eq('but not a month later',
-    L.planLibraryFill(products, recent, today).ask.length, 1);
+    L.libraryLists(products, recent, today).todo.length, 1);
 
   /* One miss is not enough to give up on a bottle — but it is enough to
      stop asking again the same day, which is what put the same ten at the
      top of two runs in a row. */
   eq('a single miss is rested for the day',
-    L.planLibraryFill(products, { b: { no: 1, at: today } }, today)
-      .ask.length, 1);
+    L.libraryLists(products, { b: { no: 1, at: today } }, today)
+      .todo.length, 1);
   eq('and comes back the following week',
-    L.planLibraryFill(products, { b: { no: 1, at: '2026-08-01' } }, today)
-      .ask.length, 2);
+    L.libraryLists(products, { b: { no: 1, at: '2026-08-01' } }, today)
+      .todo.length, 2);
 }
 
 /* §266  a fill is measured by the gaps it closes ---------------------
