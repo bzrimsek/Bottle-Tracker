@@ -9848,5 +9848,51 @@ sec('§266 found means a gap closed');
     L.gapsClosed({ proof: 100 }, []).length, 0);
 }
 
+/* §267  the fill writes the field it went looking for ---------------
+ *
+ * BZ ran a fill over 114 entries all short of NOTES, stopped after four,
+ * and got "nothing new to write" with the count unmoved.
+ *
+ * libraryGaps calls notes missing when an entry carries a flight-card
+ * prompt or a tn with no nose. libraryFillWrite refuses to write a field
+ * that already has a value, and it saw `tn` present — so it skipped the
+ * one field the run existed to fill. The bottle would have come back on
+ * every run for ever.
+ */
+sec('§267 an occupied slot that is still a gap');
+{
+  const prompt = { name: 'X', proof: 100, dist: 'H', sub: 'scotch',
+                   tn: { nose: 'a card prompt' }, tnFrom: 'PEAT IS A POSTCODE' };
+  eq('a flight-card note reads as no note',
+    L.libraryGaps(prompt), ['notes']);
+
+  const found = [{ k: 'x', name: 'X', missing: ['notes'],
+    got: { name: 'X', tn: { nose: 'real' }, tnSrc: 'model' } }];
+  const u = L.libraryFillWrite(found, { x: 1 }, { x: prompt }, 1).updates;
+  eq('the note is written over the prompt', !!u['x/tn'], true);
+  /* And the marker goes with it, or the entry reads as missing notes for
+     ever and comes back on every run. */
+  eq('and the prompt marker is cleared', u['x/tnFrom'], null);
+  const after = Object.assign({}, prompt,
+    { tn: u['x/tn'], tnSrc: u['x/tnSrc'], tnFrom: u['x/tnFrom'] });
+  eq('so the gap actually closes', L.libraryGaps(after).length, 0);
+
+  /* A REAL note is still left alone — the rule is that an occupied slot
+     is protected, and only a prompt does not count as occupied. */
+  const real = { name: 'Y', proof: 100, dist: 'H', sub: 'scotch',
+                 tn: { nose: 'somebody wrote this' } };
+  const u2 = L.libraryFillWrite(
+    [{ k: 'y', name: 'Y', missing: ['notes'],
+       got: { name: 'Y', tn: { nose: 'a model guess' } } }],
+    { y: 1 }, { y: real }, 1).updates;
+  eq('a note somebody wrote is not overwritten', u2['y/tn'], undefined);
+
+  /* And every other field keeps the old rule: never overwrite. */
+  const u3 = L.libraryFillWrite(
+    [{ k: 'z', name: 'Z', missing: ['proof'], got: { name: 'Z', proof: 120 } }],
+    { z: 1 }, { z: { name: 'Z', proof: 100 } }, 1).updates;
+  eq('a proof that is already there stands', u3['z/proof'], undefined);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -138,5 +138,30 @@ check('everything synced is also saved locally',
   (syncBlock.match(/'([a-zA-Z]+)'/g) || []).map(m => m.replace(/'/g, ''))
     .filter(k => keysBlock.indexOf("'" + k + "'") < 0));
 
+/* 11. Two functions with the SAME NAME. The later definition silently
+       replaces the earlier one and the app calls the wrong body — which is
+       exactly what broke the browser walk when a split reused the name
+       shopBottleView, and it cost a revert and two two-minute runs to
+       find. JavaScript does not complain, so something has to. */
+const names = (src.match(/^function (\w+)\(/gm) || [])
+  .map(m => m.match(/^function (\w+)/)[1]);
+const seen = {}, dupes = [];
+names.forEach(n => {
+  if (seen[n]) { if (dupes.indexOf(n) < 0) dupes.push(n); }
+  seen[n] = 1;
+});
+check('no two functions share a name', dupes);
+
+/* 12. And the same for L, where a collision would silently replace a
+       tested helper with an untested one. */
+const lNames = (src.match(/^L\.(\w+) = function/gm) || [])
+  .map(m => m.match(/^L\.(\w+)/)[1]);
+const lSeen = {}, lDupes = [];
+lNames.forEach(n => {
+  if (lSeen[n]) { if (lDupes.indexOf(n) < 0) lDupes.push(n); }
+  lSeen[n] = 1;
+});
+check('no two L helpers share a name', lDupes);
+
 console.log('\n  ' + (bad ? '\u2716 ' + bad + ' of ' + checks + ' checks found something'
   : '\u2713 all ' + checks + ' consistency checks pass'));

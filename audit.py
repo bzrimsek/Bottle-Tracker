@@ -391,6 +391,23 @@ def run_audit(html_path):
     except Exception as e:
         fail(f'consistency.js did not run: {e}')
 
+    # Every screen, drawn directly. browser.js walks the app like a person
+    # and takes two minutes; most of what it catches is a screen that THREW
+    # while drawing, and that does not need clicking to prove. Added after
+    # a name collision broke the walk and cost two full runs to find.
+    try:
+        r = subprocess.run(['node', os.path.join(base, 'screens.js')],
+                           capture_output=True, text=True, timeout=180)
+        out = (r.stdout or '') + (r.stderr or '')
+        if r.returncode != 0 or '\u2716' in out:
+            for ln in out.split('\n'):
+                if '\u2716' in ln:
+                    fail('screens: ' + ln.strip().lstrip('\u2716 ').strip())
+        else:
+            ok('every screen draws without throwing (screens.js)')
+    except Exception as e:
+        fail(f'screens.js did not run: {e}')
+
     print()
     if failures == 0:
         print('  \u2714 All checks passed — safe to deliver\n')
