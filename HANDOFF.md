@@ -267,6 +267,16 @@ The gate takes several minutes and the habit was to run it silently and
 report at the end, so every check-in got "running the gate now" — a status
 line rather than an answer, and the reason he was asking at all.
 
+**Status has to stay visible or it is not status.** BZ, watching the gate
+run: the fault was never the number of lines, it was the gaps between
+them. A check that takes a minute with nothing said is the same as a
+hung app, and asking "ok?" is what somebody does when a screen has
+stopped talking.
+
+So: say what is STARTING as well as what finished, and name the slow ones
+before they run rather than after. "Starting the browser walk, about a
+minute" costs one line and removes the reason to ask.
+
 **Run the checks ONE AT A TIME and report each as it lands.** One line per
 check, as it finishes:
 
@@ -294,3 +304,36 @@ several builds and reported nothing, because the last line was blank and
 the failure was thirty lines up: it had been clicking a Library pill that
 moved into Settings. A gate reported green while one of its checks had not
 run at all.
+
+## Hand over BZ's work the moment it exists — SOP, set 2026-09-05
+
+BZ: "separating that stuff saved me time — need more of that type of
+behavior."
+
+The recap needed an Apps Script change he makes in a different tool. It was
+handed over as soon as it was written rather than bundled into the drop at
+the end of a nine-check gate, so he was pasting and testing it while the
+walk was still running. Two things happened at once instead of one after
+the other.
+
+**If a piece of work is BZ's and does not depend on the build, ship it the
+moment it is written.** Not with the drop. That covers:
+
+- Apps Script changes (recap.gs, lookup handlers)
+- Firebase rules
+- Anything he pastes into a spreadsheet, a console, or GitHub
+- Instructions for a thing he does by hand
+
+Each of those goes out as its own file with its own short walkthrough, and
+he starts on it while the gate runs.
+
+**The reverse matters as much.** When his piece DOES depend on an app
+version, say so plainly, because a script deployed against a build he has
+not installed will look broken and cost a round trip to explain.
+
+**Write the walkthrough for somebody who has not opened that tool in a
+month.** Real menu names, real button names, the actual block of code he
+will be looking at and what it should read afterwards. "Add two lines to
+your existing doPost" is not an instruction — it asks him to read and
+understand a file he wrote once and has not seen since. That is our work,
+not his.

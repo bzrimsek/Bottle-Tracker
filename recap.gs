@@ -46,12 +46,17 @@ function writeRecap_(r) {
     '   sign-off, no markdown.',
     '3. Address them as "you". Write plainly. No tasting-note flourish, no',
     '   "it seems", no "appears to", no "interestingly".',
-    '4. NEVER name a whisky, a place, a house or a number that is not in',
-    '   the counts below. Everything you say has to be traceable to a line',
-    '   you were given.',
-    '5. If the counts are thin, say so briefly and stop. Padding a quiet',
+    '4. NAME THINGS. A bottle, a distillery, a bar, a city — if it is in',
+    '   the counts, say it. "You went back to Laphroaig twice" is worth',
+    '   reading; "you favoured peated expressions" is a horoscope. Be as',
+    '   specific as the counts let you be.',
+    '5. But NEVER name a whisky, a place, a house or a number that is not',
+    '   in the counts below. Everything you say has to be traceable to a',
+    '   line you were given — naming things is only worth doing if every',
+    '   name is real.',
+    '6. If the counts are thin, say so briefly and stop. Padding a quiet',
     '   month into a paragraph is worse than a short honest line.',
-    '6. Return the sentences as plain text. Nothing else.'
+    '7. Return the sentences as plain text. Nothing else.'
   ].join('\n');
 
   var user = [
