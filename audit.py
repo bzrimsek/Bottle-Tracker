@@ -367,6 +367,30 @@ def run_audit(html_path):
             else:
                 ok(f'lock file {lock} matches {source}')
 
+    # The wiring check. It reads index.html as text and asks the questions
+    # the suite structurally cannot: an element id nobody declares, a
+    # literal \u escape in a string, a state key that does not survive a
+    # reload, a helper defined and never called. It found three real
+    # defects in its first two runs, including a badge that had been
+    # writing to a missing element since the Library moved into Settings.
+    # Part of the gate rather than a thing to remember to run.
+    try:
+        r = subprocess.run(['node', os.path.join(base, 'consistency.js')],
+                           capture_output=True, text=True, timeout=120)
+        out = r.stdout or ''
+        bad = [ln.strip() for ln in out.split('\n') if '\u2716' in ln]
+        # The summary line counts the others and must not be counted as one
+        # itself. A first pass filtered on the leading mark, which every
+        # line has, so it swallowed the lot and reported clean.
+        fired = [b for b in bad if 'checks found something' not in b]
+        if fired:
+            for b in fired:
+                fail('consistency: ' + b.lstrip('\u2716 ').strip())
+        else:
+            ok('the wiring is consistent (consistency.js)')
+    except Exception as e:
+        fail(f'consistency.js did not run: {e}')
+
     print()
     if failures == 0:
         print('  \u2714 All checks passed — safe to deliver\n')

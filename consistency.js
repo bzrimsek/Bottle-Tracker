@@ -66,6 +66,15 @@ defined.forEach(fn => {
   (tests.indexOf('L.' + fn) >= 0 ? unwired : dead).push(fn);
 });
 check('no L function is defined and never used', dead);
+
+/* 3b. And plain top-level functions, which the check above did not see.
+       reviewLibraryFill was replaced by writeLibraryFill and sat there
+       whole, 2,600 characters of it, because it is not an L function. */
+const plainDead = (src.match(/^function (\w+)\(/gm) || [])
+  .map(m => m.match(/^function (\w+)/)[1])
+  .filter(fn => src.split(new RegExp('\\b' + fn + '\\b')).length - 1 <= 1)
+  .filter(fn => src.indexOf("'" + fn + "'") < 0);   // not called by name
+check('no plain function is defined and never called', plainDead);
 check('no L function is tested but never wired into the app', unwired);
 
 /* 4. Every axis has a search phrase. The axis list and AXIS_ASK drifted

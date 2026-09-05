@@ -3960,6 +3960,13 @@ eq('no secondary sits far below its MSRP', Object.values(data.catalog)
 eq('no flight title starts lower-case',
   data.flights.map(f => L.sentenceCase(f.title)).filter(t => /^[a-z]/.test(t)), []);
 
+/* bottleGaps was a wrapper over noteGaps and factGaps and was superseded
+   when the two buttons split — one under the notes card, one under the
+   details. The wrapper is gone; the behaviour it asserted is still worth
+   asserting, so it is spelled out here against the two live functions. */
+const gapsOfBottle = p => p
+  ? L.noteGaps(p).concat(L.factGaps(p)) : [];
+
 /* §176  Findability, and the two numbers that could never agree ----------
  *
  * Every expected value below was worked out by hand from the rules before
@@ -4748,16 +4755,16 @@ sec('§194 what one bottle is short of');
 {
   const full = { tn: { nose: 'a', palate: 'b' }, tnSrc: 'model', proof: 90,
                  age: 12, msrp: 60, fin: 'PX', dist: 'Ardbeg' };
-  eq('a complete bottle is short of nothing', L.bottleGaps(full), []);
+  eq('a complete bottle is short of nothing', gapsOfBottle(full), []);
   eq('a flight prompt counts as no notes',
-    L.bottleGaps(Object.assign({}, full, { tnFrom: 'PEAT IS A POSTCODE' }))
+    gapsOfBottle(Object.assign({}, full, { tnFrom: 'PEAT IS A POSTCODE' }))
       .indexOf('tasting notes') >= 0, true);
   eq('a missing proof is named',
-    L.bottleGaps({ proof: null, tn: { nose: 'a' }, tnSrc: 'model', age: 1,
+    gapsOfBottle({ proof: null, tn: { nose: 'a' }, tnSrc: 'model', age: 1,
       msrp: 1, fin: 'x', dist: 'y' }), ['proof']);
   eq('an empty bottle is short of everything',
-    L.bottleGaps({}).length, 6);
-  eq('nothing at all is short of nothing', L.bottleGaps(null), []);
+    gapsOfBottle({}).length, 6);
+  eq('nothing at all is short of nothing', gapsOfBottle(null), []);
 
   // The pairing that matters: the button must not offer to fetch a bottle
   // the bulk run considers done, and must offer on every one it queues.
@@ -4766,7 +4773,7 @@ sec('§194 what one bottle is short of');
     { name: 'bare' },
     Object.assign({}, full, { proof: null })];
   eq('anything the run would queue, the button offers on',
-    cases.filter(p => L.needsEnhancing(p) && !L.bottleGaps(p).length), []);
+    cases.filter(p => L.needsEnhancing(p) && !gapsOfBottle(p).length), []);
 }
 
 /* §195  accepting has to finish the job --------------------------------
@@ -6253,7 +6260,7 @@ sec('§217 the notes lookup and the facts lookup');
     [L.noteGaps(bare), L.factGaps(bare)],
     [['tasting notes'], ['proof', 'age', 'price', 'cask', 'distillery']]);
   eq('and bottleGaps still reads as the whole list, notes first',
-    L.bottleGaps(bare),
+    gapsOfBottle(bare),
     ['tasting notes', 'proof', 'age', 'price', 'cask', 'distillery']);
 
   const noted = { k: 'X', name: 'X', tn: { nose: 'smoke' }, proof: 92 };
@@ -6911,10 +6918,15 @@ sec('§228 wood families, taste profile and the likely-to-like list');
   eq('an unknown wood is not guessed at', L.woodFamily('Tuesday'), null);
   eq('no wood is no family', L.woodFamily(''), null);
 
-  eq('port is a wine cask', L.isWineWood('Port'), true);
-  eq('oloroso is a wine cask', L.isWineWood('Oloroso'), true);
-  eq('rum is not a wine cask', L.isWineWood('Rum'), false);
-  eq('american oak is not a wine cask', L.isWineWood('American Oak'), false);
+  /* isWineWood was a one-line wrapper over woodFamily and nothing called
+     it. The distinction it drew is real and still holds through the
+     function that does the work. */
+  const wine = w => ['sherry', 'fortified', 'table']
+    .indexOf(L.woodFamily(w)) >= 0;
+  eq('port is a wine cask', wine('Port'), true);
+  eq('oloroso is a wine cask', wine('Oloroso'), true);
+  eq('rum is not a wine cask', wine('Rum'), false);
+  eq('american oak is not a wine cask', wine('American Oak'), false);
 
   const both = L.woodsOf({ fin: 'Pedro Ximenez+Port' });
   eq('a double finish carries two woods', both.woods.length, 2);
@@ -8848,10 +8860,10 @@ sec('§251 how far the finishing goes');
   eq('but a shelf that is nearly all unfinished does not read 100',
     skew.pct < 80, true);
 
-  /* Three or more woods is rarer in the market, so it weighs more. */
-  eq('a triple wood weighs more than a single finish',
-    L.gapWeight('finish', 'three or more')
-      > L.gapWeight('finish', 'one finish'), true);
+  /* The scarcity WEIGHTS were cut when the scoring became two rules — a
+     ladder discounts by its holes, a set multiplies by spread — so there
+     is no longer a weight to assert. Kept as a note rather than a test of
+     a mechanism that no longer exists. */
 
   /* And it asks for the right thing when tapped. */
   eq('the finder asks for a double wood',
@@ -9789,6 +9801,51 @@ sec('§265 what is left to do, not what is imperfect');
   eq('a single miss still gets another go',
     L.planLibraryFill(products, { b: { no: 1, at: today } }, today)
       .ask.length, 2);
+}
+
+/* §266  a fill is measured by the gaps it closes ---------------------
+ *
+ * BZ: 117 worth asking about, asked 17, told 14 came back, and the count
+ * went to 114. "Makes no sense — why is this so hard."
+ *
+ * It made sense and it was measuring the wrong thing. `lookupFilled` says
+ * what an answer BROUGHT; the run was using it to decide the answer was
+ * useful. An answer carrying only a price brought something and closed
+ * nothing, was written anyway, and the gap stayed open.
+ */
+sec('§266 found means a gap closed');
+{
+  const gaps = ['proof', 'distillery', 'category', 'notes'];
+
+  eq('a proof closes the proof gap',
+    L.gapsClosed({ proof: 100 }, gaps), ['proof']);
+  eq('a distillery closes its own',
+    L.gapsClosed({ dist: 'Ardbeg' }, gaps), ['distillery']);
+  eq('a category closes its own',
+    L.gapsClosed({ sub: 'scotch' }, gaps), ['category']);
+  /* Notes arrive flat from the service and as tn from a shelf, and both
+     are a real answer to the gap libraryGaps calls "notes". */
+  eq('loose note columns close the notes gap',
+    L.gapsClosed({ nose: 'peat' }, gaps), ['notes']);
+  eq('and a tn object does too',
+    L.gapsClosed({ tn: { nose: 'peat' } }, gaps), ['notes']);
+
+  /* The case that produced the wrong number: an answer that brought
+     something real and nothing this bottle was short of. */
+  eq('a price closes nothing', L.gapsClosed({ msrp: 90 }, gaps).length, 0);
+  eq('nor an age', L.gapsClosed({ age: 12 }, gaps).length, 0);
+  eq('nor a name', L.gapsClosed({ name: 'X' }, gaps).length, 0);
+
+  /* Only what THIS bottle lacked counts. A proof is no use to a bottle
+     that already had one. */
+  eq('a field it was not short of does not count',
+    L.gapsClosed({ proof: 100 }, ['notes']).length, 0);
+  eq('and one it was short of does',
+    L.gapsClosed({ proof: 100, nose: 'peat' }, ['notes']), ['notes']);
+
+  eq('nothing back closes nothing', L.gapsClosed(null, gaps).length, 0);
+  eq('and a bottle short of nothing cannot gain',
+    L.gapsClosed({ proof: 100 }, []).length, 0);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
