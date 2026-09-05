@@ -10721,8 +10721,39 @@ sec('§278 would I like this');
   eq('and says why it matters at a bar',
     /cannot pour later/.test(L.wouldILike('Ardbeg Ten', cat, bs, []).why),
     true);
+  /* A BAR IS NOT A SHOP, and the shop's reasoning is upside down here.
+
+     BZ, on being told "worth trying — you own 5 from Lagavulin": "kind of
+     a boring recommendation." He was right, and it was worse than boring —
+     owning five from a house is a reason to buy a sixth and a reason NOT
+     to order one, because you can pour that at home. The list picker
+     already worked this way and the single-bottle answer did not. */
+  const deep = {
+    a: { k: 'a', name: 'Lagavulin 16', dist: 'Lagavulin', proof: 86,
+         sub: 'scotch' },
+    b: { k: 'b', name: 'Lagavulin 8', dist: 'Lagavulin', proof: 96,
+         sub: 'scotch' },
+    c: { k: 'c', name: 'Lagavulin 12', dist: 'Lagavulin', proof: 112,
+         sub: 'scotch' }
+  };
+  const deepBs = [{ k: 'a', status: 'open' }, { k: 'b', status: 'open' },
+                  { k: 'c', status: 'open' }];
+  const familiar = L.wouldILike('Lagavulin Distillers Edition', deep,
+    deepBs, []);
+  eq('a house you know well argues DOWN',
+    familiar.verdict, 'you know this one');
+  eq('and says why that matters at a bar',
+    /cannot pour at home/.test(familiar.why), true);
+
+  /* And the thing the shop calls unknown and treats as a risk is the best
+     reason to spend one glass. */
+  const strange = L.wouldILike('Kavalan Solist', deep, deepBs, []);
+  eq('something unlike your shelf argues UP', strange.verdict, 'order it');
+  eq('for the reason that only holds at a bar',
+    /rather than buy a bottle/.test(strange.why), true);
+
   eq('something else gets a real verdict',
-    ['order it', 'worth trying', 'a gamble']
+    ['order it', 'worth trying', 'you know this one']
       .indexOf(L.wouldILike('Yamazaki 18', cat, bs, []).verdict) >= 0, true);
   eq('two letters is not a question',
     L.wouldILike('xx', cat, bs, []), null);
