@@ -9396,5 +9396,129 @@ sec('§260 sharing what was poured');
   eq('an empty record is nothing', L.tastingForGuest(null, {}, []), null);
 }
 
+/* §261  a wishlist pointed outward -----------------------------------
+ *
+ * BZ: "I envision sending a short list via text to someone else, or having
+ * it visible to a buddy." Both, because they are different occasions — a
+ * text is somebody asking what to get you the week before a birthday, and
+ * a visible list is a buddy already standing in a shop.
+ */
+sec('§261 asking for a bottle');
+{
+  const cat = {
+    own: { k: 'own', name: 'Ardbeg 10 Years Old' },
+    want: { k: 'want', name: 'Longrow 18 Year Old' },
+    other: { k: 'other', name: 'Kavalan Solist' }
+  };
+  const bs = [{ k: 'own', status: 'open' }];
+  const flights = [{ title: 'CAMPBELTOWN NIGHT',
+    core: [{ k: 'own' }, { k: 'want' }] }];
+  const wish = [{ name: 'Kavalan Solist' },
+                { name: 'Longrow 18 Year Old' },
+                { name: 'Ardbeg Ten' }];
+
+  const list = L.giftList(wish, cat, bs, flights, 5);
+  /* Already on the shelf is off the list: a wishlist outlives the
+     wanting, and nothing is worse on a gift list than a bottle somebody
+     already has. Matched by OVERLAP, because the list says "Ardbeg Ten"
+     and the library says "Ardbeg 10 Years Old". */
+  eq('a bottle already owned is dropped', list.length, 2);
+  eq('even when the names differ',
+    list.some(r => /Ardbeg/.test(r.name)), false);
+
+  /* A bottle that finishes a designed flight is the one to say out loud. */
+  eq('the flight-finishing bottle leads', list[0].name,
+    'Longrow 18 Year Old');
+  eq('and it says so', list[0].unlocks, 'CAMPBELTOWN NIGHT');
+
+  /* SHORT is the point: thirty is a research project, five is a decision. */
+  const many = [];
+  for (let i = 0; i < 30; i++) many.push({ name: 'Bottle ' + i });
+  eq('the list is capped', L.giftList(many, cat, bs, flights, 5).length, 5);
+
+  /* The message is for somebody who does not use this app and never
+     will: no jargon, no links, and NO PRICES — a gift list with prices
+     tells somebody what to spend, which is a different and ruder
+     message. */
+  const txt = L.giftText(list, 'Lori');
+  eq('it is addressed', /^Lori, if you are ever stuck/.test(txt), true);
+  eq('it names the bottles', /Longrow 18/.test(txt), true);
+  eq('it explains the first one',
+    /finishes a tasting/.test(txt), true);
+  eq('and it asks for ONE', /no need for more than that/.test(txt), true);
+  eq('no prices anywhere', /[$\u00a3\u20ac]/.test(txt), false);
+  eq('an anonymous version still reads',
+    /^If you are ever stuck/.test(L.giftText(list, '')), true);
+  eq('an empty list is no message', L.giftText([], 'Lori'), '');
+
+  eq('nothing wanted is nothing to ask for',
+    L.giftList([], cat, bs, flights, 5).length, 0);
+  eq('and a missing wishlist is not an error',
+    L.giftList(null, cat, bs, flights, 5).length, 0);
+}
+
+/* §262  one trip, everything it knows -------------------------------
+ *
+ * BZ shopped from the chart, a hundred bottles reached the shared library,
+ * and then he had to spend the evening filling in what each was missing.
+ * "If we go once we need to get all we can, no two step process."
+ *
+ * He was right and it was three separate leaks. The verification call is a
+ * FULL lookup — it comes back with the age, the cask, the category, the
+ * notes — and the code kept proof, price and distillery and threw the rest
+ * away. `parseLookup` never read recognition or allocation at all. And the
+ * sensory columns arrive flat while `libraryEntry` looks for a `tn`
+ * object, so every note a lookup returned was dropped on the way in.
+ *
+ * The bottle then went to the library thin, and somebody paid a second
+ * lookup to learn what the first one had already said.
+ */
+sec('§262 what a lookup answer keeps');
+{
+  const raw = { name: 'Kavalan Solist Vinho Barrique', proof: 114,
+    dist: 'Kavalan', sub: 'world', style: 'single malt', fin: 'Wine',
+    msrp: 250, obsc: 'niche', scar: 'limited', alloc: 'rare',
+    nose: 'tropical fruit', palate: 'oak and mango',
+    finish: 'long, drying' };
+  const parsed = L.parseLookup(raw, { name: raw.name, needIdentity: false });
+
+  /* The fields that were being read and dropped. */
+  eq('the cask survives', parsed.fin, 'Wine');
+  eq('the category survives', parsed.sub, 'world');
+  eq('the style survives', parsed.style, 'single malt');
+  eq('the list price survives', parsed.msrp, 250);
+  /* And the two that were never parsed at all. */
+  eq('how well known it is', parsed.obsc, 'niche');
+  eq('and how hard to get', parsed.alloc, 'rare');
+  eq('a value outside the list is not invented',
+    L.parseLookup({ name: 'X', proof: 90, obsc: 'quite rare' },
+      { needIdentity: false }).obsc, null);
+
+  /* The notes arrive flat and have to be assembled, or the library entry
+     goes out asking for the one thing the answer already gave. */
+  const e = Object.assign({}, parsed);
+  if (!e.tn && (parsed.nose || parsed.palate)) {
+    e.tn = {};
+    ['colour', 'nose', 'palate', 'finish'].forEach(k => {
+      if (parsed[k]) e.tn[k] = parsed[k];
+    });
+    e.tnSrc = 'model';
+  }
+  const entry = L.libraryEntry(e);
+  eq('the notes reach the library', !!entry.tn, true);
+  eq('and say where they came from', entry.tnSrc, 'model');
+
+  /* The whole point: a complete answer makes a complete entry, so nobody
+     pays twice for the same question. */
+  eq('a full answer leaves no gaps', L.libraryGaps(entry).length, 0);
+
+  /* A thin answer is still thin — this must not invent what it was not
+     told. */
+  const thin = L.libraryEntry(L.parseLookup({ name: 'Mystery', proof: 90 },
+    { needIdentity: false }));
+  eq('a thin answer still reports its gaps',
+    L.libraryGaps(thin).length > 0, true);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
