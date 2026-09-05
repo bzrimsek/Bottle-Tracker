@@ -163,5 +163,20 @@ lNames.forEach(n => {
 });
 check('no two L helpers share a name', lDupes);
 
+/* 13. An id emitted by a function that runs many times per page must be
+       unique. Every glass emitted id="cg", so a payline of three had the
+       same id three times and url(#cg) resolved to whichever came first —
+       the fill on every glass after it depended on one it did not own. */
+const svgIds = (src.match(/<(?:clipPath|linearGradient|mask|filter) id="([^"]+)"/g) || [])
+  .map(m => m.match(/id="([^"]+)"/)[1])
+  .filter(id => !/'\s*\+|\+\s*/.test(id));   // built ids are fine
+check('no fixed svg id is emitted by a repeated drawing',
+  svgIds.filter(id => {
+    const i = src.indexOf('id="' + id + '"');
+    const fn = src.lastIndexOf('function ', i);
+    // inside a function that returns markup: it will run more than once
+    return fn > 0 && src.slice(fn, i).indexOf('return') >= 0;
+  }));
+
 console.log('\n  ' + (bad ? '\u2716 ' + bad + ' of ' + checks + ' checks found something'
   : '\u2713 all ' + checks + ' consistency checks pass'));
